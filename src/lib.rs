@@ -70,6 +70,7 @@ pub mod llm;
 pub mod memory;
 pub mod mcp;
 pub mod template;
+pub mod tools;
 
 // ── User-space ──
 pub mod shell;

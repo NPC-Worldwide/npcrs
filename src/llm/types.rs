@@ -103,6 +103,8 @@ pub struct LlmResponse {
     pub model: String,
     /// Whether the response was cut off.
     pub finish_reason: Option<String>,
+    /// Estimated cost in USD (populated by gen::get_response or manually).
+    pub cost_usd: Option<f64>,
 }
 
 /// Token usage statistics.

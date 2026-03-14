@@ -6,6 +6,8 @@
 mod client;
 mod providers;
 mod types;
+pub mod cost;
+pub mod sanitize;
 
 pub use client::*;
 pub use types::*;
