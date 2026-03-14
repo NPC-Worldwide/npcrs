@@ -1,0 +1,68 @@
+[package]
+name = "npcrs"
+version = "0.1.0"
+edition = "2024"
+description = "Rust core for the NPC system — agent kernel, jinx executor, LLM client"
+license = "MIT"
+
+[lib]
+name = "npcrs"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Template engine (Jinja2-compatible)
+tera = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client for LLM APIs
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Knowledge graph
+petgraph = "0.7"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+
+# Glob for file patterns
+glob = "0.3"
+
+# UUID for conversation/message IDs
+uuid = { version = "1", features = ["v4"] }
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async streams (for LLM streaming)
+futures = "0.3"
+tokio-stream = "0.1"
+
+# Regex for command parsing
+regex = "1"
+
+# Shell expansion (~ paths)
+shellexpand = "3"
+
+# For reading dirs
+walkdir = "2"
+
+[features]
+default = ["ffi"]
+ffi = []
+python = []  # Future: PyO3 embedding for python jinx steps
+
+[dev-dependencies]
+tempfile = "3.27.0"
