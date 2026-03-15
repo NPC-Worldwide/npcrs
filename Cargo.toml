@@ -25,7 +25,7 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 
 # Multi-provider LLM client (OpenAI, Anthropic, Gemini, Ollama, etc.)
-genai = "0.1"
+genai = "0.5"
 
 # SSE parsing for streaming
 eventsource-stream = "0.2"
@@ -67,6 +67,7 @@ tokio-stream = "0.1"
 
 # Regex for command parsing
 regex = "1"
+
 
 # Shell expansion (~ paths)
 shellexpand = "3"
