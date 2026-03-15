@@ -72,6 +72,13 @@ pub mod mcp;
 pub mod template;
 pub mod tools;
 
+// ── Generation & high-level functions ──
+pub mod r#gen;
+pub mod llm_funcs;
+
+// ── Server mode ──
+pub mod serve;
+
 // ── User-space ──
 pub mod shell;
 
@@ -83,9 +90,11 @@ pub mod error;
 // Re-exports
 pub use kernel::Kernel;
 pub use npc::Npc;
+pub use npc::{Agent, ToolAgent, CodingAgent};
 pub use jinx::Jinx;
 pub use team::Team;
 pub use process::Process;
 pub use llm::LlmClient;
+pub use tools::ToolRegistry;
 pub use shell::ShellState;
 pub use error::{NpcError, Result};

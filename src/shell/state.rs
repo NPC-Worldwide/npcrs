@@ -24,7 +24,7 @@ pub struct ShellState {
     pub messages: Vec<Message>,
 
     /// Current conversation ID in the database.
-    pub conversation_id: Option<i64>,
+    pub conversation_id: String,
 
     /// Current shell mode (agent, chat, cmd, etc.).
     pub current_mode: ShellMode,
@@ -323,15 +323,17 @@ impl ShellState {
                 jinx::execute_jinx(&jinx, &inputs, &self.team.jinxes).await?;
 
             // Record execution
-            if let Some(conv_id) = self.conversation_id {
-                let _ = self.history.record_jinx_execution(
-                    Some(conv_id),
-                    cmd_name,
-                    &serde_json::to_string(&inputs).unwrap_or_default(),
-                    &result.output,
-                    result.success,
-                );
-            }
+            let conv_id = &self.conversation_id;
+            let _ = self.history.save_jinx_execution(
+                conv_id,
+                cmd_name,
+                &serde_json::to_string(&inputs).unwrap_or_default(),
+                &result.output,
+                if result.success { "success" } else { "error" },
+                None, None,
+                result.error.as_deref(),
+                None,
+            );
 
             return Ok(CommandResult {
                 output: result.output,

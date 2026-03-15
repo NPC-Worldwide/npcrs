@@ -1,10 +1,12 @@
-//! NPC agent definition, loading, and tool resolution.
+//! NPC agent definition, loading, tool resolution, and agent subclasses.
 
 mod loader;
 mod types;
+pub mod agents;
 
 pub use loader::load_npc_from_file;
 pub use types::*;
+pub use agents::{Agent, ToolAgent, CodingAgent};
 
 use crate::error::Result;
 use crate::jinx::Jinx;
@@ -96,17 +98,19 @@ impl Npc {
             .await
     }
 
-    /// Model to use, falling back to defaults.
+    /// Model to use, falling back to env vars then defaults.
     pub fn resolved_model(&self) -> String {
         self.model
             .clone()
-            .unwrap_or_else(|| "gpt-4o-mini".to_string())
+            .or_else(|| std::env::var("NPCSH_CHAT_MODEL").ok())
+            .unwrap_or_else(|| "qwen3.5:2b".to_string())
     }
 
-    /// Provider to use, falling back to defaults.
+    /// Provider to use, falling back to env vars then defaults.
     pub fn resolved_provider(&self) -> String {
         self.provider
             .clone()
-            .unwrap_or_else(|| "openai".to_string())
+            .or_else(|| std::env::var("NPCSH_CHAT_PROVIDER").ok())
+            .unwrap_or_else(|| "ollama".to_string())
     }
 }

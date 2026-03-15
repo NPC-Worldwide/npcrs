@@ -213,7 +213,7 @@ pub extern "C" fn npcrs_shell_create(
         llm_client: LlmClient::from_env(),
         history,
         messages: Vec::new(),
-        conversation_id: None,
+        conversation_id: crate::memory::start_new_conversation(),
         current_mode: ShellMode::Agent,
         current_path: cwd,
         stream_output: false,

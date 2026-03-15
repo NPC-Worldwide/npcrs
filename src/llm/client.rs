@@ -1,140 +1,173 @@
-use crate::error::{NpcError, Result};
-use crate::llm::providers;
-use crate::llm::types::*;
-use reqwest::Client;
-use std::collections::HashMap;
+//! LLM client powered by the `genai` crate (v0.5).
+//!
+//! genai handles provider routing, API keys (from env), and protocol
+//! differences (OpenAI, Anthropic, Gemini, Ollama, Groq, etc.) automatically.
 
-/// Multi-provider LLM client.
-///
-/// Dispatches to the right API format based on provider name.
-/// Supports: openai, anthropic, ollama, and any OpenAI-compatible endpoint.
+use crate::error::{NpcError, Result};
+use crate::llm::types::*;
+
+use genai::chat::{
+    ChatMessage, ChatRequest, ChatResponse as GenaiChatResponse, ContentPart,
+    MessageContent as GenaiContent, Tool as GenaiTool, ToolCall as GenaiToolCall,
+    ToolResponse as GenaiToolResponse,
+};
+use genai::Client as GenaiClient;
+
+/// Multi-provider LLM client backed by `genai`.
 pub struct LlmClient {
-    http: Client,
-    /// Provider name → config (base_url, api_key).
-    providers: HashMap<String, ProviderConfig>,
+    client: GenaiClient,
 }
 
 impl LlmClient {
-    /// Create a new LLM client, auto-detecting configured providers from env.
+    /// Create from environment (genai auto-discovers API keys).
     pub fn from_env() -> Self {
-        let http = Client::new();
-        let mut providers_map = HashMap::new();
-
-        // OpenAI
-        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            providers_map.insert(
-                "openai".to_string(),
-                ProviderConfig {
-                    base_url: std::env::var("OPENAI_API_BASE")
-                        .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
-                    api_key: Some(key),
-                },
-            );
-        }
-
-        // Anthropic
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            providers_map.insert(
-                "anthropic".to_string(),
-                ProviderConfig {
-                    base_url: "https://api.anthropic.com".to_string(),
-                    api_key: Some(key),
-                },
-            );
-        }
-
-        // Ollama (no key needed)
-        providers_map.insert(
-            "ollama".to_string(),
-            ProviderConfig {
-                base_url: std::env::var("OLLAMA_HOST")
-                    .unwrap_or_else(|_| "http://localhost:11434".to_string()),
-                api_key: None,
-            },
-        );
-
-        // Google / Gemini
-        if let Ok(key) = std::env::var("GOOGLE_API_KEY") {
-            providers_map.insert(
-                "google".to_string(),
-                ProviderConfig {
-                    base_url: "https://generativelanguage.googleapis.com".to_string(),
-                    api_key: Some(key),
-                },
-            );
-        }
-
         Self {
-            http,
-            providers: providers_map,
+            client: GenaiClient::default(),
         }
     }
 
-    /// Create with explicit provider configs.
-    pub fn new(providers: HashMap<String, ProviderConfig>) -> Self {
-        Self {
-            http: Client::new(),
-            providers,
-        }
-    }
-
-    /// Register or update a provider config.
-    pub fn set_provider(&mut self, name: impl Into<String>, config: ProviderConfig) {
-        self.providers.insert(name.into(), config);
+    /// Create with a pre-built genai client.
+    pub fn new_with_genai(client: GenaiClient) -> Self {
+        Self { client }
     }
 
     /// Send a chat completion request.
+    ///
+    /// `provider` is ignored — genai infers the provider from the model name.
+    /// `api_url_override` is currently unused (genai manages endpoints).
     pub async fn chat_completion(
         &self,
-        provider: &str,
+        _provider: &str,
         model: &str,
         messages: &[Message],
         tools: Option<&[ToolDef]>,
-        api_url_override: Option<&str>,
+        _api_url_override: Option<&str>,
     ) -> Result<LlmResponse> {
-        let config = self.providers.get(provider).ok_or_else(|| {
-            NpcError::UnsupportedProvider {
-                provider: provider.to_string(),
-            }
-        })?;
+        // Build genai ChatRequest from our Message types
+        let mut req = ChatRequest::new(Vec::new());
 
-        let base_url = api_url_override.unwrap_or(&config.base_url);
+        for msg in messages {
+            let content_str = msg.content.as_deref().unwrap_or("");
 
-        match provider {
-            "anthropic" => {
-                providers::anthropic::chat_completion(
-                    &self.http,
-                    base_url,
-                    config.api_key.as_deref(),
-                    model,
-                    messages,
-                    tools,
-                )
-                .await
-            }
-            "ollama" => {
-                providers::openai_compat::chat_completion(
-                    &self.http,
-                    &format!("{}/v1", base_url),
-                    None,
-                    model,
-                    messages,
-                    tools,
-                )
-                .await
-            }
-            // openai and any openai-compatible provider
-            _ => {
-                providers::openai_compat::chat_completion(
-                    &self.http,
-                    base_url,
-                    config.api_key.as_deref(),
-                    model,
-                    messages,
-                    tools,
-                )
-                .await
+            match msg.role.as_str() {
+                "system" => {
+                    req = req.with_system(content_str);
+                }
+                "user" => {
+                    req = req.append_message(ChatMessage::user(content_str));
+                }
+                "assistant" => {
+                    if let Some(ref tcs) = msg.tool_calls {
+                        // Assistant message with tool calls
+                        let genai_tcs: Vec<GenaiToolCall> = tcs
+                            .iter()
+                            .map(|tc| GenaiToolCall {
+                                call_id: tc.id.clone(),
+                                fn_name: tc.function.name.clone(),
+                                fn_arguments: serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+                                thought_signatures: None,
+                            })
+                            .collect();
+                        req = req.append_message(ChatMessage::assistant(
+                            GenaiContent::from_tool_calls(genai_tcs),
+                        ));
+                    } else {
+                        req = req.append_message(ChatMessage::assistant(content_str));
+                    }
+                }
+                "tool" => {
+                    let call_id = msg.tool_call_id.as_deref().unwrap_or("");
+                    let tool_resp = GenaiToolResponse::new(call_id, content_str);
+                    req = req.append_message(ChatMessage::from(tool_resp));
+                }
+                _ => {
+                    req = req.append_message(ChatMessage::user(content_str));
+                }
             }
         }
+
+        // Add tools if present
+        if let Some(tool_defs) = tools {
+            let genai_tools: Vec<GenaiTool> = tool_defs
+                .iter()
+                .map(|td| {
+                    let mut t = GenaiTool::new(&td.function.name);
+                    if let Some(ref desc) = td.function.description {
+                        t = t.with_description(desc);
+                    }
+                    t = t.with_schema(td.function.parameters.clone());
+                    t
+                })
+                .collect();
+            req = req.with_tools(genai_tools);
+        }
+
+        // Execute via genai
+        let genai_resp = self
+            .client
+            .exec_chat(model, req, None)
+            .await
+            .map_err(|e| NpcError::LlmRequest(format!("{}", e)))?;
+
+        // Convert genai response back to our types
+        convert_genai_response(genai_resp, model)
     }
+}
+
+/// Convert a genai ChatResponse into our internal LlmResponse.
+fn convert_genai_response(resp: GenaiChatResponse, model: &str) -> Result<LlmResponse> {
+    let mut content_text: Option<String> = None;
+    let mut tool_calls: Option<Vec<ToolCall>> = None;
+
+    let genai_content = &resp.content;
+
+    // Check for tool calls
+    let tcs = genai_content.tool_calls();
+    if !tcs.is_empty() {
+        tool_calls = Some(
+            tcs.iter()
+                .map(|tc| ToolCall {
+                    id: tc.call_id.clone(),
+                    r#type: "function".to_string(),
+                    function: ToolCallFunction {
+                        name: tc.fn_name.clone(),
+                        arguments: serde_json::to_string(&tc.fn_arguments)
+                            .unwrap_or_else(|_| "{}".to_string()),
+                    },
+                })
+                .collect(),
+        );
+    }
+
+    // Check for text content
+    let text: Option<String> = genai_content.joined_texts();
+    if let Some(ref t) = text {
+        if !t.is_empty() {
+            content_text = text;
+        }
+    }
+
+    let usage = {
+        let u = &resp.usage;
+        Some(Usage {
+            prompt_tokens: u.prompt_tokens.unwrap_or(0) as u64,
+            completion_tokens: u.completion_tokens.unwrap_or(0) as u64,
+            total_tokens: u.total_tokens.unwrap_or(0) as u64,
+        })
+    };
+
+    Ok(LlmResponse {
+        message: Message {
+            role: "assistant".to_string(),
+            content: content_text,
+            tool_calls,
+            tool_call_id: None,
+            name: None,
+        },
+        usage,
+        model: model.to_string(),
+        finish_reason: None,
+        cost_usd: None,
+    })
 }

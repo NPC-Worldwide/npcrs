@@ -4,9 +4,9 @@
 //! This replaces litellm — we talk directly to each provider's HTTP API.
 
 mod client;
-mod providers;
 mod types;
 pub mod cost;
+pub mod model_info;
 pub mod sanitize;
 
 pub use client::*;

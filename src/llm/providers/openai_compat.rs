@@ -137,5 +137,6 @@ pub async fn chat_completion(
         usage,
         model: chat_resp.model.unwrap_or_else(|| model.to_string()),
         finish_reason: choice.finish_reason,
+        cost_usd: None,
     })
 }

@@ -69,7 +69,7 @@ impl Kernel {
     /// Spawn a new process from an NPC.
     pub fn spawn(&mut self, npc: Npc, ppid: Pid, capabilities: Capabilities) -> Pid {
         let pid = self.next_pid.fetch_add(1, Ordering::Relaxed);
-        let process = Process::spawn(pid, ppid, npc, capabilities);
+        let mut process = Process::spawn(pid, ppid, npc, capabilities);
 
         tracing::info!(
             "kernel: spawned pid:{} ({}) ppid:{}",
@@ -144,11 +144,9 @@ impl Kernel {
         process.state = ProcessState::Running;
         process.new_turn();
 
-        let system = process
-            .npc
-            .system_prompt(self.team.context.as_deref());
+        let system = process.npc.system_prompt(self.team.context.as_deref());
 
-        // Build messages without tool messages
+        // Build messages without tool messages (like Python chat mode)
         let mut messages = vec![Message::system(system)];
         for m in &process.messages {
             if m.role != "tool" && m.tool_calls.is_none() {
@@ -164,7 +162,7 @@ impl Kernel {
                 &process.npc.resolved_provider(),
                 &process.npc.resolved_model(),
                 &messages,
-                None, // no tools
+                None,
                 process.npc.api_url.as_deref(),
             )
             .await?;
@@ -191,439 +189,329 @@ impl Kernel {
         syscall::execute_syscall(self, pid, jinx_name, args).await
     }
 
-    /// Send a prompt to a process's NPC and get a response.
-    /// This is the core "CPU cycle" — the LLM processes the NPC's context.
+    /// Execute the agent loop — mirrors Python's process_pipeline_command.
+    ///
+    /// Flow (matching npcpy exactly):
+    /// 1. Sanitize messages before each iteration
+    /// 2. First iteration sends user input, subsequent send "Continue. Call stop when done."
+    /// 3. Execute tool calls, print results, append to messages
+    /// 4. Loop until no tool calls or max iterations (50)
+    /// 5. Accumulate usage across iterations
     pub async fn exec(
         &mut self,
         pid: Pid,
         input: &str,
     ) -> Result<String> {
-        let process = self.processes.get_mut(&pid).ok_or_else(|| {
-            NpcError::Other(format!("No process with pid {}", pid))
-        })?;
+        use crate::llm::sanitize::sanitize_messages;
+        use crate::llm::cost::calculate_cost;
 
-        // Check resource limits
-        if let Some(reason) = process.usage.exceeds(&process.limits) {
-            process.kill(137); // OOM-kill equivalent
-            return Err(NpcError::Other(format!(
-                "Process {} killed: {}",
-                pid, reason
-            )));
-        }
+        // Extract what we need from the process, then drop the borrow
+        let (model, provider, system, api_url, npc_name, mut tool_defs, executors) = {
+            let process = self.processes.get_mut(&pid).ok_or_else(|| {
+                NpcError::Other(format!("No process with pid {}", pid))
+            })?;
 
-        process.state = ProcessState::Running;
-        process.new_turn();
-
-        // Build message list
-        let system = process
-            .npc
-            .system_prompt(self.team.context.as_deref());
-        let mut messages = vec![Message::system(system)];
-        messages.extend(process.messages.clone());
-        messages.push(Message::user(input));
-
-        // Resolve tools (with capability filtering)
-        let (mut tool_defs, executors) = process.npc.resolve_tools(&self.jinxes);
-
-        tracing::info!(
-            "kernel exec pid:{} npc:{} jinx_names:{:?} resolved_tools:{} team_jinxes:{}",
-            pid,
-            process.npc.name,
-            process.npc.jinx_names,
-            tool_defs.len(),
-            self.jinxes.len(),
-        );
-
-        // If no tools resolved but NPC has jinx names, log which ones failed
-        if tool_defs.is_empty() && !process.npc.jinx_names.is_empty() {
-            for name in &process.npc.jinx_names {
-                if !self.jinxes.contains_key(name) {
-                    tracing::warn!("jinx '{}' referenced by NPC '{}' not found in team jinxes", name, process.npc.name);
-                }
+            if let Some(reason) = process.usage.exceeds(&process.limits) {
+                process.kill(137);
+                return Err(NpcError::Other(format!("Process {} killed: {}", pid, reason)));
             }
-        }
 
-        // Filter tools by capabilities
-        if !process.capabilities.is_superuser && !process.capabilities.allowed_jinxes.is_empty() {
-            tool_defs.retain(|t| {
-                process
-                    .capabilities
-                    .allowed_jinxes
-                    .contains(&t.function.name)
-            });
-        }
+            process.state = ProcessState::Running;
+            process.new_turn();
 
-        let tools = if tool_defs.is_empty() {
-            None
-        } else {
-            Some(tool_defs.as_slice())
+            let (td, ex) = process.npc.resolve_tools(&self.jinxes);
+            let model = process.npc.resolved_model();
+            let provider = process.npc.resolved_provider();
+            let system = process.npc.system_prompt(self.team.context.as_deref());
+            let api_url = process.npc.api_url.clone();
+            let npc_name = process.npc.name.clone();
+
+            if !process.capabilities.is_superuser && !process.capabilities.allowed_jinxes.is_empty() {
+                let mut td = td;
+                td.retain(|t| process.capabilities.allowed_jinxes.contains(&t.function.name));
+                (model, provider, system, api_url, npc_name, td, ex)
+            } else {
+                (model, provider, system, api_url, npc_name, td, ex)
+            }
         };
 
-        tracing::info!("kernel exec pid:{} sending {} tools to LLM", pid, tool_defs.len());
+        let tools = if tool_defs.is_empty() { None } else { Some(tool_defs.as_slice()) };
 
-        // LLM call — the "CPU cycle"
-        let response = self
-            .drivers
-            .llm()
-            .chat_completion(
-                &process.npc.resolved_provider(),
-                &process.npc.resolved_model(),
-                &messages,
-                tools,
-                process.npc.api_url.as_deref(),
+        // Add context info like Python does
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let platform_info = format!("Platform: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
+        let context_info = format!("The current working directory is: {}\n{}", cwd, platform_info);
+
+        // Tool guidance (matches Python's tool prompt injection)
+        let tool_guidance = if tools.is_some() {
+            let tool_names: Vec<&str> = tool_defs.iter().map(|t| t.function.name.as_str()).collect();
+            format!(
+                "\nYou have access to these tools: {}. Call tools via the function calling interface.\n\
+                 Use tools when you need to take action (run commands, search, edit files, etc.). \
+                 Use chat to respond to the user. Use stop when you are done. \
+                 Do not call the same tool twice with the same arguments.\n\
+                 Do not call stop without first calling chat to deliver a response to the user.\n\
+                 The user can see tool outputs directly. Do not re-write or repeat them in your chat response.",
+                tool_names.join(", ")
             )
-            .await?;
+        } else {
+            String::new()
+        };
 
-        // Record usage
-        if let Some(ref usage) = response.usage {
-            process.record_usage(usage.prompt_tokens, usage.completion_tokens, 0.0);
-        }
-
-        // Handle tool calls (recursive loop)
+        // Agent loop — mirrors Python's while iteration < max_iterations
+        let max_iterations = 50;
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
         let mut final_output = String::new();
-        let mut current_response = response;
+        let mut tool_calls_count = 0;
+        let mut stop_requested = false;
 
-        for round in 0..process.limits.max_tool_calls_per_turn.unwrap_or(20) as usize {
-            if let Some(ref tool_calls) = current_response.message.tool_calls {
-                tracing::info!(
-                    "kernel exec pid:{} tool_call round:{} calls:{}",
-                    pid, round, tool_calls.len()
-                );
-                messages.push(current_response.message.clone());
+        for iteration in 0..max_iterations {
+            if stop_requested {
+                break;
+            }
 
-                for tc in tool_calls {
-                    tracing::info!(
-                        "kernel exec pid:{} calling tool '{}' args={}",
-                        pid, tc.function.name, &tc.function.arguments[..tc.function.arguments.len().min(100)]
-                    );
-                    // Capability check
-                    if !process.capabilities.can_run_jinx(&tc.function.name) {
-                        messages.push(Message::tool_result(
-                            &tc.id,
-                            &format!("EPERM: process {} lacks capability for jinx '{}'", pid, tc.function.name),
+            // Sanitize messages before EACH iteration (matches Python)
+            {
+                let process = self.processes.get_mut(&pid).unwrap();
+                process.messages = sanitize_messages(std::mem::take(&mut process.messages));
+            }
+
+            // Build message list fresh each iteration
+            let mut messages = vec![Message::system(&system)];
+            {
+                let process = self.processes.get(&pid).unwrap();
+                messages.extend(process.messages.clone());
+            }
+
+            // First iteration: user input + context. Subsequent: "Continue."
+            let iter_prompt = if iteration == 0 {
+                format!("{}\n{}{}", input, context_info, tool_guidance)
+            } else {
+                "Continue. Call stop when done.".to_string()
+            };
+            messages.push(Message::user(&iter_prompt));
+
+            eprintln!(
+                "\x1b[90m  [iter {}] {} msgs\x1b[0m",
+                iteration + 1,
+                messages.len(),
+            );
+
+            // LLM call
+            let response = self
+                .drivers
+                .llm()
+                .chat_completion(&provider, &model, &messages, tools, api_url.as_deref())
+                .await?;
+
+            // Accumulate usage
+            if let Some(ref usage) = response.usage {
+                total_input_tokens += usage.prompt_tokens;
+                total_output_tokens += usage.completion_tokens;
+                let cost = calculate_cost(&model, usage.prompt_tokens, usage.completion_tokens);
+                let process = self.processes.get_mut(&pid).unwrap();
+                process.record_usage(usage.prompt_tokens, usage.completion_tokens, cost);
+            }
+
+            // Add user message to process history (only on first iteration)
+            if iteration == 0 {
+                let process = self.processes.get_mut(&pid).unwrap();
+                process.messages.push(Message::user(input));
+            }
+
+            // Check for tool calls
+            if let Some(ref tool_calls) = response.message.tool_calls {
+                tool_calls_count += 1;
+
+                // Add assistant message with tool_calls to history
+                {
+                    let process = self.processes.get_mut(&pid).unwrap();
+                    process.messages.push(response.message.clone());
+                }
+
+                // Log tool names
+                let called: Vec<&str> = tool_calls.iter().map(|tc| tc.function.name.as_str()).collect();
+                eprintln!("\x1b[90m  [iter {}] tools: {}\x1b[0m", iteration + 1, called.join(", "));
+
+                // Collect tool call info to avoid borrow conflict
+                let tc_info: Vec<(String, String, String)> = tool_calls.iter()
+                    .map(|tc| (tc.id.clone(), tc.function.name.clone(), tc.function.arguments.clone()))
+                    .collect();
+
+                // Check capabilities
+                let can_run: Vec<bool> = {
+                    let process = self.processes.get(&pid).unwrap();
+                    tc_info.iter()
+                        .map(|(_, name, _)| process.capabilities.can_run_jinx(name))
+                        .collect()
+                };
+
+                // Execute each tool call
+                for (i, (tc_id, tc_name, tc_args_str)) in tc_info.iter().enumerate() {
+                    if !can_run[i] {
+                        let process = self.processes.get_mut(&pid).unwrap();
+                        process.messages.push(Message::tool_result(
+                            tc_id,
+                            &format!("EPERM: lacks capability for '{}'", tc_name),
                         ));
                         continue;
                     }
 
-                    process.usage.tool_calls_this_turn += 1;
+                    {
+                        let process = self.processes.get_mut(&pid).unwrap();
+                        process.usage.tool_calls_this_turn += 1;
+                    }
 
-                    // Execute the tool
                     let args: HashMap<String, String> =
-                        serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                        serde_json::from_str(tc_args_str).unwrap_or_default();
 
-                    let tool_result = match tc.function.name.as_str() {
-                        // ── Native kernel syscalls ──
-                        // These are handled directly for reliability since
-                        // the .jinx versions use Python with context/state refs.
-                        "sh" => {
-                            let cmd = args.get("bash_command").cloned().unwrap_or_default();
-                            if cmd.is_empty() {
-                                "(no command provided)".to_string()
-                            } else {
-                                match tokio::process::Command::new("bash")
-                                    .arg("-c")
-                                    .arg(&cmd)
-                                    .output()
-                                    .await
-                                {
-                                    Ok(out) => {
-                                        let stdout = String::from_utf8_lossy(&out.stdout);
-                                        let stderr = String::from_utf8_lossy(&out.stderr);
-                                        if !out.status.success() && !stderr.is_empty() {
-                                            format!("Error (exit {}):\n{}", out.status.code().unwrap_or(-1), stderr)
-                                        } else if stdout.trim().is_empty() {
-                                            "(no output)".to_string()
-                                        } else {
-                                            stdout.to_string()
-                                        }
-                                    }
-                                    Err(e) => format!("Failed to run command: {}", e),
-                                }
-                            }
-                        }
-                        "python" => {
-                            let code = args.get("code").cloned().unwrap_or_default();
-                            if code.is_empty() {
-                                "(no code provided)".to_string()
-                            } else {
-                                match tokio::process::Command::new("python3")
-                                    .arg("-c")
-                                    .arg(&code)
-                                    .output()
-                                    .await
-                                {
-                                    Ok(out) => {
-                                        let stdout = String::from_utf8_lossy(&out.stdout);
-                                        let stderr = String::from_utf8_lossy(&out.stderr);
-                                        if stdout.trim().is_empty() && !stderr.is_empty() {
-                                            format!("Python error:\n{}", stderr)
-                                        } else {
-                                            stdout.to_string()
-                                        }
-                                    }
-                                    Err(e) => format!("Failed to run Python: {}", e),
-                                }
-                            }
-                        }
-                        "web_search" => {
-                            let query = args.get("query")
-                                .or_else(|| args.get("search_query"))
-                                .cloned()
-                                .unwrap_or_default();
-                            if query.is_empty() {
-                                "(no query provided)".to_string()
-                            } else {
-                                // Use ddgr (DuckDuckGo CLI) or curl fallback
-                                let search_cmd = format!(
-                                    "curl -sL 'https://lite.duckduckgo.com/lite/?q={}' | sed -n 's/.*<a[^>]*class=\"result-link\"[^>]*>\\(.*\\)<\\/a>.*/\\1/p' | head -5",
-                                    query.replace(' ', "+").replace('\'', "")
-                                );
-                                match tokio::process::Command::new("bash")
-                                    .arg("-c")
-                                    .arg(&search_cmd)
-                                    .output()
-                                    .await
-                                {
-                                    Ok(out) => {
-                                        let stdout = String::from_utf8_lossy(&out.stdout);
-                                        if stdout.trim().is_empty() {
-                                            format!("Web search for '{}': no results from lite search. The query was sent but parsing returned empty.", query)
-                                        } else {
-                                            format!("Web search results for '{}':\n{}", query, stdout)
-                                        }
-                                    }
-                                    Err(e) => format!("Search failed: {}", e),
-                                }
-                            }
-                        }
-                        "stop" => {
-                            // Signal to stop the tool call loop
-                            "STOP".to_string()
-                        }
-                        "chat" => {
-                            // Chat tool = just respond directly, no action needed
-                            let msg = args.get("message")
-                                .or_else(|| args.get("query"))
-                                .cloned()
-                                .unwrap_or_default();
-                            msg
-                        }
-                        "edit_file" | "edit" => {
-                            let path = args.get("path")
-                                .or_else(|| args.get("file_path"))
-                                .cloned()
-                                .unwrap_or_default();
-                            let path = shellexpand::tilde(&path).to_string();
-                            let action = args.get("action").cloned().unwrap_or_else(|| "create".to_string());
-                            let new_text = args.get("new_text")
-                                .or_else(|| args.get("content"))
-                                .or_else(|| args.get("text"))
-                                .cloned()
-                                .unwrap_or_default();
-                            let old_text = args.get("old_text").cloned().unwrap_or_default();
+                    let tool_result = self.execute_tool(tc_name, &args, &executors).await;
 
-                            match action.as_str() {
-                                "create" | "write" => {
-                                    match std::fs::write(&path, &new_text) {
-                                        Ok(_) => format!("Created/wrote file: {} ({} bytes)", path, new_text.len()),
-                                        Err(e) => format!("Error writing {}: {}", path, e),
-                                    }
-                                }
-                                "append" => {
-                                    use std::io::Write;
-                                    match std::fs::OpenOptions::new().append(true).create(true).open(&path) {
-                                        Ok(mut f) => {
-                                            match f.write_all(new_text.as_bytes()) {
-                                                Ok(_) => format!("Appended to {}", path),
-                                                Err(e) => format!("Error appending: {}", e),
-                                            }
-                                        }
-                                        Err(e) => format!("Error opening {}: {}", path, e),
-                                    }
-                                }
-                                "replace" => {
-                                    match std::fs::read_to_string(&path) {
-                                        Ok(content) => {
-                                            let updated = content.replace(&old_text, &new_text);
-                                            match std::fs::write(&path, &updated) {
-                                                Ok(_) => format!("Replaced text in {}", path),
-                                                Err(e) => format!("Error writing {}: {}", path, e),
-                                            }
-                                        }
-                                        Err(e) => format!("Error reading {}: {}", path, e),
-                                    }
-                                }
-                                _ => format!("Unknown edit action: {}", action),
-                            }
-                        }
-                        "load_file" => {
-                            let path = args.get("path")
-                                .or_else(|| args.get("file_path"))
-                                .cloned()
-                                .unwrap_or_default();
-                            let path = shellexpand::tilde(&path).to_string();
-                            match std::fs::read_to_string(&path) {
-                                Ok(content) => {
-                                    let lines = content.lines().count();
-                                    if content.len() > 10000 {
-                                        format!("File: {} ({} lines, {} bytes)\n---\n{}...\n[truncated]",
-                                            path, lines, content.len(), &content[..10000])
-                                    } else {
-                                        format!("File: {} ({} lines, {} bytes)\n---\n{}",
-                                            path, lines, content.len(), content)
-                                    }
-                                }
-                                Err(e) => format!("Error reading {}: {}", path, e),
-                            }
-                        }
-                        "file_search" => {
-                            let query = args.get("query")
-                                .or_else(|| args.get("pattern"))
-                                .or_else(|| args.get("search_query"))
-                                .cloned()
-                                .unwrap_or_default();
-                            let path = args.get("path")
-                                .or_else(|| args.get("directory"))
-                                .cloned()
-                                .unwrap_or_else(|| ".".to_string());
-                            let path = shellexpand::tilde(&path).to_string();
-
-                            // Use grep -rn for content search
-                            let cmd = format!(
-                                "grep -rn --include='*.{{py,rs,js,ts,md,txt,yaml,yml,toml,json,sh,jinx,npc,ctx}}' -l '{}' '{}' 2>/dev/null | head -20",
-                                query.replace('\'', "'\\''"),
-                                path,
-                            );
-                            match tokio::process::Command::new("bash")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await
-                            {
-                                Ok(out) => {
-                                    let stdout = String::from_utf8_lossy(&out.stdout);
-                                    if stdout.trim().is_empty() {
-                                        format!("No files found matching '{}' in {}", query, path)
-                                    } else {
-                                        format!("Files matching '{}' in {}:\n{}", query, path, stdout)
-                                    }
-                                }
-                                Err(e) => format!("Search error: {}", e),
-                            }
-                        }
-                        "db_search" => {
-                            let query = args.get("query")
-                                .or_else(|| args.get("search_query"))
-                                .cloned()
-                                .unwrap_or_default();
-                            format!("Database search for '{}': not yet implemented (use /sql jinx)", query)
-                        }
-                        "sql" => {
-                            let query = args.get("query")
-                                .or_else(|| args.get("sql_query"))
-                                .cloned()
-                                .unwrap_or_default();
-                            // Execute via sqlite3 CLI
-                            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
-                            let cmd = format!("sqlite3 '{}' '{}'", db_path, query.replace('\'', "''"));
-                            match tokio::process::Command::new("bash")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await
-                            {
-                                Ok(out) => {
-                                    let stdout = String::from_utf8_lossy(&out.stdout);
-                                    let stderr = String::from_utf8_lossy(&out.stderr);
-                                    if !stderr.is_empty() {
-                                        format!("SQL error: {}", stderr)
-                                    } else if stdout.trim().is_empty() {
-                                        "(no results)".to_string()
-                                    } else {
-                                        stdout.to_string()
-                                    }
-                                }
-                                Err(e) => format!("SQL execution error: {}", e),
-                            }
-                        }
-                        "delegate" | "convene" => {
-                            // Delegation/convene — extract target and message
-                            let target = args.get("npc_name")
-                                .or_else(|| args.get("target"))
-                                .or_else(|| args.get("npc"))
-                                .cloned()
-                                .unwrap_or_default();
-                            let msg = args.get("message")
-                                .or_else(|| args.get("query"))
-                                .or_else(|| args.get("task"))
-                                .cloned()
-                                .unwrap_or_default();
-                            format!("[delegation to @{}: {}]", target, msg)
-                        }
-                        // ── Fallback: execute via jinx engine ──
-                        _ => {
-                            match executors.get(&tc.function.name) {
-                                Some(crate::npc::ToolExecutor::Jinx(jname)) => {
-                                    if let Some(j) = self.jinxes.get(jname) {
-                                        match jinx::execute_jinx(j, &args, &self.jinxes).await {
-                                            Ok(r) => r.output,
-                                            Err(e) => format!("Jinx error: {}", e),
-                                        }
-                                    } else {
-                                        format!("ENOENT: jinx '{}' not found", jname)
-                                    }
-                                }
-                                _ => format!("ENOSYS: tool '{}' not implemented", tc.function.name),
-                            }
-                        }
+                    // Print tool result immediately (like Python does)
+                    eprintln!("\x1b[36m\n⚡ {}:\x1b[0m", tc_name);
+                    let preview = if tool_result.len() > 500 {
+                        format!("{}...\n[{} chars total]", &tool_result[..500], tool_result.len())
+                    } else {
+                        tool_result.clone()
                     };
+                    eprintln!("{}", preview);
 
-                    tracing::info!(
-                        "kernel exec pid:{} tool '{}' result: {}",
-                        pid, tc.function.name,
-                        &tool_result[..tool_result.len().min(200)]
-                    );
+                    if tc_name == "stop" {
+                        stop_requested = true;
+                    }
 
-                    messages.push(Message::tool_result(&tc.id, &tool_result));
+                    if tc_name == "chat" {
+                        final_output = args.get("message")
+                            .or_else(|| args.get("query"))
+                            .cloned()
+                            .unwrap_or_default();
+                    }
+
+                    let process = self.processes.get_mut(&pid).unwrap();
+                    process.messages.push(Message::tool_result(tc_id, &tool_result));
                 }
-
-                // Next LLM cycle
-                process.state = ProcessState::Blocked;
-                let next = self
-                    .drivers
-                    .llm()
-                    .chat_completion(
-                        &process.npc.resolved_provider(),
-                        &process.npc.resolved_model(),
-                        &messages,
-                        tools,
-                        process.npc.api_url.as_deref(),
-                    )
-                    .await?;
-
-                if let Some(ref usage) = next.usage {
-                    process.record_usage(usage.prompt_tokens, usage.completion_tokens, 0.0);
-                }
-
-                current_response = next;
-                process.state = ProcessState::Running;
             } else {
                 // No tool calls — final response
-                final_output = current_response
-                    .message
-                    .content
-                    .clone()
-                    .unwrap_or_default();
+                final_output = response.message.content.clone().unwrap_or_default();
+                let process = self.processes.get_mut(&pid).unwrap();
+                process.messages.push(response.message);
                 break;
             }
         }
 
-        // Update process memory
-        process.messages.push(Message::user(input));
-        process.messages.push(Message::assistant(&final_output));
-        process.state = ProcessState::Blocked; // waiting for next input
+        eprintln!(
+            "\x1b[90m  [{} iterations, {} tool call rounds]\x1b[0m",
+            std::cmp::min(max_iterations, tool_calls_count + 1),
+            tool_calls_count,
+        );
 
+        let process = self.processes.get_mut(&pid).unwrap();
+        process.state = ProcessState::Blocked;
         Ok(final_output)
+    }
+
+    /// Execute a single tool by name — matches Python's tool_exec_map dispatch.
+    async fn execute_tool(
+        &self,
+        name: &str,
+        args: &HashMap<String, String>,
+        executors: &HashMap<String, crate::npc::ToolExecutor>,
+    ) -> String {
+        match name {
+            "sh" => {
+                let cmd = args.get("bash_command").cloned().unwrap_or_default();
+                if cmd.is_empty() { return "(no command provided)".to_string(); }
+                match tokio::process::Command::new("bash").arg("-c").arg(&cmd).output().await {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !out.status.success() && !stderr.is_empty() {
+                            format!("Error (exit {}):\n{}", out.status.code().unwrap_or(-1), stderr)
+                        } else if stdout.trim().is_empty() { "(no output)".to_string() }
+                        else { stdout.to_string() }
+                    }
+                    Err(e) => format!("Failed: {}", e),
+                }
+            }
+            "python" => {
+                let code = args.get("code").cloned().unwrap_or_default();
+                if code.is_empty() { return "(no code provided)".to_string(); }
+                match tokio::process::Command::new("python3").arg("-c").arg(&code).output().await {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if stdout.trim().is_empty() && !stderr.is_empty() { format!("Python error:\n{}", stderr) }
+                        else { stdout.to_string() }
+                    }
+                    Err(e) => format!("Failed: {}", e),
+                }
+            }
+            "web_search" => {
+                let query = args.get("query").or_else(|| args.get("search_query")).cloned().unwrap_or_default();
+                if query.is_empty() { return "(no query)".to_string(); }
+                let cmd = format!("curl -sL 'https://lite.duckduckgo.com/lite/?q={}' | sed -n 's/.*<a[^>]*class=\"result-link\"[^>]*>\\(.*\\)<\\/a>.*/\\1/p' | head -5", query.replace(' ', "+").replace('\'', ""));
+                match tokio::process::Command::new("bash").arg("-c").arg(&cmd).output().await {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        if stdout.trim().is_empty() { format!("No results for '{}'", query) }
+                        else { format!("Results for '{}':\n{}", query, stdout) }
+                    }
+                    Err(e) => format!("Search failed: {}", e),
+                }
+            }
+            "stop" => "STOP".to_string(),
+            "chat" => args.get("message").or_else(|| args.get("query")).cloned().unwrap_or_default(),
+            "edit_file" | "edit" => {
+                let path = shellexpand::tilde(args.get("path").or_else(|| args.get("file_path")).map(|s| s.as_str()).unwrap_or("")).to_string();
+                let action = args.get("action").map(|s| s.as_str()).unwrap_or("create");
+                let new_text = args.get("new_text").or_else(|| args.get("content")).or_else(|| args.get("text")).cloned().unwrap_or_default();
+                let old_text = args.get("old_text").cloned().unwrap_or_default();
+                match action {
+                    "create" | "write" => std::fs::write(&path, &new_text).map(|_| format!("Wrote {} ({} bytes)", path, new_text.len())).unwrap_or_else(|e| format!("Error: {}", e)),
+                    "append" => { use std::io::Write; std::fs::OpenOptions::new().append(true).create(true).open(&path).and_then(|mut f| f.write_all(new_text.as_bytes())).map(|_| format!("Appended to {}", path)).unwrap_or_else(|e| format!("Error: {}", e)) }
+                    "replace" => std::fs::read_to_string(&path).and_then(|c| std::fs::write(&path, c.replace(&old_text, &new_text))).map(|_| format!("Replaced in {}", path)).unwrap_or_else(|e| format!("Error: {}", e)),
+                    _ => format!("Unknown action: {}", action),
+                }
+            }
+            "load_file" => {
+                let path = shellexpand::tilde(args.get("path").or_else(|| args.get("file_path")).map(|s| s.as_str()).unwrap_or("")).to_string();
+                match std::fs::read_to_string(&path) {
+                    Ok(c) => { let l = c.lines().count(); if c.len() > 10000 { format!("File: {} ({} lines)\n---\n{}...[truncated]", path, l, &c[..10000]) } else { format!("File: {} ({} lines)\n---\n{}", path, l, c) } }
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+            "file_search" => {
+                let query = args.get("query").or_else(|| args.get("pattern")).cloned().unwrap_or_default();
+                let path = shellexpand::tilde(args.get("path").or_else(|| args.get("directory")).map(|s| s.as_str()).unwrap_or(".")).to_string();
+                let cmd = format!("grep -rn --include='*.{{py,rs,js,ts,md,txt,yaml,yml,toml,json,sh}}' -l '{}' '{}' 2>/dev/null | head -20", query.replace('\'', ""), path);
+                match tokio::process::Command::new("bash").arg("-c").arg(&cmd).output().await {
+                    Ok(out) => { let s = String::from_utf8_lossy(&out.stdout); if s.trim().is_empty() { format!("No files matching '{}' in {}", query, path) } else { s.to_string() } }
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+            "delegate" | "convene" => {
+                let target = args.get("npc_name").or_else(|| args.get("target")).cloned().unwrap_or_default();
+                let msg = args.get("message").or_else(|| args.get("query")).cloned().unwrap_or_default();
+                format!("[delegation to @{}: {}]", target, msg)
+            }
+            // Fallback: jinx engine
+            _ => {
+                match executors.get(name) {
+                    Some(crate::npc::ToolExecutor::Jinx(jname)) => {
+                        if let Some(j) = self.jinxes.get(jname) {
+                            match jinx::execute_jinx(j, args, &self.jinxes).await {
+                                Ok(r) => r.output,
+                                Err(e) => format!("Jinx error: {}", e),
+                            }
+                        } else { format!("Jinx '{}' not found", jname) }
+                    }
+                    _ => format!("Tool '{}' not implemented", name),
+                }
+            }
+        }
     }
 
     /// Fork a process — create a child with the same NPC but fresh state.

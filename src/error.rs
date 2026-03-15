@@ -50,6 +50,18 @@ pub enum NpcError {
     #[error("Shell error: {0}")]
     Shell(String),
 
+    #[error("Embedding error: {0}")]
+    Embedding(String),
+
+    #[error("Memory error: {0}")]
+    Memory(String),
+
+    #[error("Generation error: {0}")]
+    Generation(String),
+
+    #[error("Server error: {0}")]
+    Server(String),
+
     #[error("{0}")]
     Other(String),
 }

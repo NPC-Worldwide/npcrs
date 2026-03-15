@@ -74,13 +74,20 @@ pub async fn execute_syscall(
     let result = jinx::execute_jinx(jinx, args, &kernel.jinxes).await?;
 
     // 6. Record execution
-    let conv_id = None; // TODO: link to process's conversation
-    let _ = kernel.history.record_jinx_execution(
-        conv_id,
+    let conv_id = kernel.processes.get(&pid)
+        .map(|p| p.conversation_id.clone())
+        .unwrap_or_default();
+    let npc_name = kernel.processes.get(&pid).map(|p| p.npc.name.as_str());
+    let _ = kernel.history.save_jinx_execution(
+        &conv_id,
         jinx_name,
         &serde_json::to_string(args).unwrap_or_default(),
         &result.output,
-        result.success,
+        if result.success { "success" } else { "error" },
+        npc_name,
+        None,
+        result.error.as_deref(),
+        None,
     );
 
     // 7. Update process usage

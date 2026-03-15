@@ -61,6 +61,9 @@ pub struct Process {
 
     /// Exit code (set when state = Dead).
     pub exit_code: Option<i32>,
+
+    /// Conversation ID (UUID string, matches npcpy).
+    pub conversation_id: String,
 }
 
 /// Process lifecycle states.
@@ -266,6 +269,7 @@ impl Process {
             spawned_at: now,
             last_active: now,
             exit_code: None,
+            conversation_id: crate::memory::start_new_conversation(),
         }
     }
 

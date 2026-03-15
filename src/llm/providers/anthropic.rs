@@ -227,5 +227,6 @@ pub async fn chat_completion(
             .model
             .unwrap_or_else(|| model.to_string()),
         finish_reason: anthropic_resp.stop_reason,
+        cost_usd: None,
     })
 }

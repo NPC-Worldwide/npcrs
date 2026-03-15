@@ -15,6 +15,13 @@ pub fn load_npc_from_file(path: impl AsRef<Path>) -> Result<Npc> {
         source: e,
     })?;
 
+    // Strip shebang if present (for executable .npc files)
+    let raw = if raw.starts_with("#!") {
+        raw.splitn(2, '\n').nth(1).unwrap_or("").to_string()
+    } else {
+        raw
+    };
+
     // Pre-process: strip Jinja2 template calls like {{ Jinx('name') }}
     // and convert them to plain string names for serde
     let processed = preprocess_npc_yaml(&raw);

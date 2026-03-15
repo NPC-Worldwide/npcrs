@@ -12,6 +12,13 @@ pub fn load_jinx_from_file(path: impl AsRef<Path>) -> Result<Jinx> {
         source: e,
     })?;
 
+    // Strip shebang if present (for executable .jinx files)
+    let raw = if raw.starts_with("#!") {
+        raw.splitn(2, '\n').nth(1).unwrap_or("").to_string()
+    } else {
+        raw
+    };
+
     // Strip Jinja2 template syntax that Tera won't understand
     let cleaned = strip_jinja2_specifics(&raw);
 

@@ -32,7 +32,7 @@ pub async fn get_llm_response(
                 .unwrap_or_else(|| npc.resolved_provider()),
         )
     } else {
-        let m = model.unwrap_or("llama3.2");
+        let m = model.unwrap_or("qwen3.5:2b");
         let p = provider.unwrap_or("ollama");
         (m.to_string(), p.to_string())
     };
