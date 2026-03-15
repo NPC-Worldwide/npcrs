@@ -1,5 +1,5 @@
 use crate::error::{NpcError, Result};
-use crate::jinx::Jinx;
+use crate::npc_compiler::Jinx;
 use std::collections::HashMap;
 use std::path::Path;
 use walkdir::WalkDir;

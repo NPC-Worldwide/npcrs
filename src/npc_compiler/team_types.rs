@@ -1,5 +1,5 @@
-use crate::jinx::Jinx;
-use crate::npc::Npc;
+use crate::npc_compiler::Jinx;
+use crate::npc_compiler::Npc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -31,7 +31,7 @@ pub struct Team {
     pub databases: Vec<String>,
 
     /// MCP server specs from .ctx file.
-    pub mcp_servers: Vec<crate::npc::McpServerSpec>,
+    pub mcp_servers: Vec<crate::npc_compiler::McpServerSpec>,
 
     /// Directory this team was loaded from.
     pub source_dir: Option<String>,
@@ -109,7 +109,7 @@ pub struct TeamCtx {
     pub databases: Vec<String>,
 
     #[serde(default)]
-    pub mcp_servers: Vec<crate::npc::McpServerSpec>,
+    pub mcp_servers: Vec<crate::npc_compiler::McpServerSpec>,
 
     #[serde(default)]
     pub use_global_jinxes: bool,

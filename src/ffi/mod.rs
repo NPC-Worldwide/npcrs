@@ -18,11 +18,11 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::llm::LlmClient;
+
 use crate::memory::CommandHistory;
-use crate::npc::Npc;
-use crate::shell::{ShellConfig, ShellMode, ShellState};
-use crate::team::Team;
+use crate::npc_compiler::Npc;
+use crate::shell::{ShellMode, ShellState};
+use crate::npc_compiler::Team;
 
 // ─── Helpers ───
 
@@ -53,7 +53,7 @@ pub extern "C" fn npcrs_free_string(ptr: *mut c_char) {
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_load(path: *const c_char) -> *mut Team {
     let path = unsafe { from_c_str(path) };
-    match crate::team::load_team_from_directory(&path) {
+    match crate::npc_compiler::load_team_from_directory(&path) {
         Ok(team) => Box::into_raw(Box::new(team)),
         Err(e) => {
             eprintln!("npcrs_team_load error: {}", e);
@@ -210,18 +210,12 @@ pub extern "C" fn npcrs_shell_create(
     let state = ShellState {
         npc,
         team,
-        llm_client: LlmClient::from_env(),
         history,
         messages: Vec::new(),
         conversation_id: crate::memory::start_new_conversation(),
         current_mode: ShellMode::Agent,
         current_path: cwd,
         stream_output: false,
-        session_input_tokens: 0,
-        session_output_tokens: 0,
-        session_cost_usd: 0.0,
-        turn_count: 0,
-        config: ShellConfig::default(),
     };
 
     Box::into_raw(Box::new(state))
@@ -255,8 +249,15 @@ pub extern "C" fn npcrs_shell_process_command(
     let input = unsafe { from_c_str(input) };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    match rt.block_on(state.process_command(&input)) {
-        Ok(result) => to_c_string(&result.output),
+    // TODO: route through kernel exec or llm_funcs::get_llm_response
+    match rt.block_on(crate::r#gen::get_genai_response(
+        &state.npc.resolved_provider(),
+        &state.npc.resolved_model(),
+        &state.messages,
+        None,
+        state.npc.api_url.as_deref(),
+    )) {
+        Ok(resp) => to_c_string(resp.message.content.as_deref().unwrap_or("")),
         Err(e) => to_c_string(&format!("Error: {}", e)),
     }
 }

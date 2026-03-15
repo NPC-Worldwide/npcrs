@@ -5,9 +5,9 @@
 //! 2. MCP server — exposes team jinxes as MCP tools for external clients
 
 use crate::error::{NpcError, Result};
-use crate::jinx;
-use crate::llm::{LlmClient, Message};
-use crate::team::Team;
+use crate::npc_compiler;
+use crate::r#gen::Message;
+use crate::npc_compiler::Team;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -32,7 +32,6 @@ impl Default for ServerConfig {
 /// Shared server state.
 pub struct ServerState {
     pub team: Team,
-    pub llm_client: LlmClient,
     pub active_npc_name: String,
     pub conversations: HashMap<String, Vec<Message>>,
 }
@@ -119,7 +118,7 @@ async fn handle_connection(
 
                 match state
                     .llm_client
-                    .chat_completion(
+                    .crate::llm_funcs::get_llm_response(
                         &npc.resolved_provider(),
                         &npc.resolved_model(),
                         &messages,
@@ -152,7 +151,7 @@ async fn handle_connection(
 
             let state = state.lock().await;
             if let Some(j) = state.team.jinxes.get(jinx_name) {
-                match jinx::execute_jinx(j, &args, &state.team.jinxes).await {
+                match npc_compiler::execute_jinx(j, &args, &state.team.jinxes).await {
                     Ok(result) => {
                         serde_json::json!({"output": result.output, "success": result.success})
                             .to_string()
@@ -259,7 +258,7 @@ pub async fn start_mcp_server(state: Arc<Mutex<ServerState>>) -> Result<()> {
 
                 let state = state.lock().await;
                 if let Some(j) = state.team.jinxes.get(tool_name) {
-                    match jinx::execute_jinx(j, &args, &state.team.jinxes).await {
+                    match npc_compiler::execute_jinx(j, &args, &state.team.jinxes).await {
                         Ok(result) => serde_json::json!({
                             "content": [{"type": "text", "text": result.output}],
                             "isError": !result.success,
@@ -330,7 +329,6 @@ pub async fn start_servers(team: Team, config: ServerConfig) -> Result<()> {
 
     let state = Arc::new(Mutex::new(ServerState {
         team,
-        llm_client: LlmClient::from_env(),
         active_npc_name: active_npc,
         conversations: HashMap::new(),
     }));

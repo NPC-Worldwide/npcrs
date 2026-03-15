@@ -8,7 +8,7 @@
 //! - Lifecycle state (spawned → running → blocked → zombie → dead)
 //! - File descriptors (stdin/stdout/stderr as message channels)
 
-use crate::npc::Npc;
+use crate::npc_compiler::Npc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -48,7 +48,7 @@ pub struct Process {
     pub cwd: String,
 
     /// Message history (process-local memory).
-    pub messages: Vec<crate::llm::Message>,
+    pub messages: Vec<crate::r#gen::Message>,
 
     /// File descriptors: fd → channel.
     pub fds: HashMap<u32, FileDescriptor>,

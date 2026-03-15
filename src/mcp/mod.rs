@@ -9,7 +9,7 @@ mod client;
 
 pub use client::*;
 
-use crate::llm::ToolDef;
+use crate::r#gen::ToolDef;
 use serde::{Deserialize, Serialize};
 
 /// An MCP tool discovered from a server.
@@ -27,7 +27,7 @@ impl McpTool {
     pub fn to_tool_def(&self) -> ToolDef {
         ToolDef {
             r#type: "function".to_string(),
-            function: crate::llm::FunctionDef {
+            function: crate::r#gen::FunctionDef {
                 name: self.name.clone(),
                 description: self.description.clone(),
                 parameters: self.input_schema.clone(),

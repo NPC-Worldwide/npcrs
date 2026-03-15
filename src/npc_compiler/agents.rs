@@ -8,8 +8,8 @@
 //! ```
 
 use crate::error::Result;
-use crate::llm::{LlmClient, Message, ToolDef};
-use crate::npc::Npc;
+use crate::r#gen::{Message, ToolDef};
+use crate::npc_compiler::Npc;
 use crate::tools::{RegisteredTool, ToolBuilder, ToolRegistry};
 
 /// Agent — NPC + default tool set.
@@ -34,7 +34,8 @@ impl Agent {
         Self::new(Npc::new(name, directive))
     }
 
-    pub async fn run(&mut self, client: &LlmClient, input: &str) -> Result<String> {
+    /// Run the agent loop — no client parameter needed, uses standalone chat_completion.
+    pub async fn run(&mut self, input: &str) -> Result<String> {
         let system = self.npc.system_prompt(None);
         let mut msgs = vec![Message::system(system)];
         msgs.extend(self.messages.clone());
@@ -52,8 +53,7 @@ impl Agent {
 
         let mut final_output = String::new();
         for _ in 0..10 {
-            let response = client
-                .chat_completion(
+            let response = crate::r#gen::get_genai_response(
                     &provider,
                     &model,
                     &msgs,
@@ -92,8 +92,9 @@ impl ToolAgent {
         Self { agent }
     }
 
-    pub async fn run(&mut self, client: &LlmClient, input: &str) -> Result<String> {
-        self.agent.run(client, input).await
+    /// Run the tool agent loop — no client parameter needed.
+    pub async fn run(&mut self, input: &str) -> Result<String> {
+        self.agent.run(input).await
     }
 }
 
@@ -151,12 +152,13 @@ impl CodingAgent {
         }
     }
 
-    pub async fn run(&mut self, client: &LlmClient, input: &str) -> Result<String> {
+    /// Run the coding agent loop — no client parameter needed.
+    pub async fn run(&mut self, input: &str) -> Result<String> {
         let mut current_input = input.to_string();
         let mut last_response = String::new();
 
         for _ in 0..5 {
-            last_response = self.agent.run(client, &current_input).await?;
+            last_response = self.agent.run(&current_input).await?;
 
             if !self.auto_execute {
                 return Ok(last_response);

@@ -1,5 +1,5 @@
 use crate::error::{NpcError, Result};
-use crate::npc::Npc;
+use crate::npc_compiler::Npc;
 use std::path::Path;
 
 /// Load an NPC from a .npc YAML file.

@@ -1,5 +1,5 @@
 use crate::error::{NpcError, Result};
-use crate::jinx::{Jinx, JinxResult, JinxStep};
+use crate::npc_compiler::{Jinx, JinxResult, JinxStep};
 use std::collections::HashMap;
 use tera::{Context, Tera};
 use tokio::process::Command;

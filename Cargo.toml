@@ -27,6 +27,9 @@ reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], defau
 # Multi-provider LLM client (OpenAI, Anthropic, Gemini, Ollama, etc.)
 genai = "0.5"
 
+# Local GGUF inference (llama.cpp)
+llama-cpp-2 = { version = "0.1", optional = true }
+
 # SSE parsing for streaming
 eventsource-stream = "0.2"
 

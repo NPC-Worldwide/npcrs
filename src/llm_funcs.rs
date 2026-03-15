@@ -4,16 +4,16 @@
 //! full NPC context, command type detection, and cost tracking.
 
 use crate::error::Result;
-use crate::llm::{LlmClient, LlmResponse, Message, ToolDef};
-use crate::npc::Npc;
+use crate::r#gen::{LlmResponse, Message, ToolDef, ToolCall};
+use crate::npc_compiler::Npc;
 
 /// Get an LLM response with full NPC context.
 ///
 /// This is the primary interface for getting responses — handles system prompt,
 /// tool resolution, message history, and cost tracking.
+/// No client parameter needed — uses the global standalone chat_completion.
 pub async fn get_llm_response(
     input: &str,
-    client: &LlmClient,
     npc: Option<&Npc>,
     model: Option<&str>,
     provider: Option<&str>,
@@ -50,58 +50,81 @@ pub async fn get_llm_response(
     full_messages.push(Message::user(input));
 
     // Sanitize
-    let clean = crate::llm::sanitize::sanitize_messages(full_messages);
+    let clean = crate::r#gen::sanitize::sanitize_messages(full_messages);
 
-    // Call LLM
-    let response = client
-        .chat_completion(
-            &resolved_provider,
-            &resolved_model,
-            &clean,
-            tools,
-            npc.and_then(|n| n.api_url.as_deref()),
-        )
-        .await?;
+    // Call LLM via gen::response (internal genai dispatch)
+    let response = crate::r#gen::get_genai_response(
+        &resolved_provider,
+        &resolved_model,
+        &clean,
+        tools,
+        npc.and_then(|n| n.api_url.as_deref()),
+    )
+    .await?;
 
-    // Calculate cost
-    let cost = if let Some(ref usage) = response.usage {
-        crate::llm::cost::calculate_cost(
-            &resolved_model,
-            usage.prompt_tokens,
-            usage.completion_tokens,
-        )
-    } else {
-        0.0
-    };
+    // Build result matching npcpy's return dict
+    let usage_info = response.usage.as_ref().map(|u| UsageInfo {
+        input_tokens: u.prompt_tokens,
+        output_tokens: u.completion_tokens,
+    });
 
-    let output = response.message.content.clone().unwrap_or_default();
+    let cost = response.usage.as_ref().map(|u| {
+        crate::r#gen::cost::calculate_cost(&resolved_model, u.prompt_tokens, u.completion_tokens)
+    }).unwrap_or(0.0);
+
+    let response_text = response.message.content.clone();
+    let tool_calls = response.message.tool_calls.clone().unwrap_or_default();
+
+    // Append assistant message to messages (like npcpy does)
+    let mut updated_messages = clean;
+    updated_messages.push(response.message);
 
     Ok(LlmResponseResult {
-        output,
-        response,
-        cost_usd: cost,
+        response: response_text,
+        messages: updated_messages,
+        tool_calls,
+        tool_results: Vec::new(),
+        usage: usage_info,
         model: resolved_model,
         provider: resolved_provider,
+        cost_usd: cost,
+        error: None,
     })
 }
 
-/// Result from get_llm_response with metadata.
+/// Result from get_llm_response — mirrors npcpy's return dict exactly.
+///
+/// npcpy returns: {"response", "messages", "tool_calls", "tool_results", "usage", "raw_response", "error"}
 pub struct LlmResponseResult {
-    /// The text output from the LLM.
-    pub output: String,
-    /// The full LLM response including tool calls, usage, etc.
-    pub response: LlmResponse,
-    /// Estimated cost in USD for this request.
-    pub cost_usd: f64,
+    /// Text response content (None if streaming or error).
+    pub response: Option<String>,
+    /// Updated message list with assistant response appended.
+    pub messages: Vec<Message>,
+    /// Tool calls from the model response.
+    pub tool_calls: Vec<ToolCall>,
+    /// Tool execution results.
+    pub tool_results: Vec<String>,
+    /// Token usage: input_tokens, output_tokens.
+    pub usage: Option<UsageInfo>,
     /// The model that was used.
     pub model: String,
     /// The provider that was used.
     pub provider: String,
+    /// Estimated cost in USD.
+    pub cost_usd: f64,
+    /// Error message if failed.
+    pub error: Option<String>,
+}
+
+/// Token usage info — mirrors npcpy's usage dict.
+pub struct UsageInfo {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 /// Check if user input should be handled as a command, jinx, or LLM query.
 /// Returns the command type and any extracted data.
-pub fn check_command_type(input: &str) -> CommandType {
+pub fn check_llm_command(input: &str) -> CommandType {
     let trimmed = input.trim();
 
     if trimmed.is_empty() {
@@ -191,13 +214,13 @@ mod tests {
 
     #[test]
     fn test_check_command_type_empty() {
-        assert_eq!(check_command_type(""), CommandType::Empty);
-        assert_eq!(check_command_type("  "), CommandType::Empty);
+        assert_eq!(check_llm_command(""), CommandType::Empty);
+        assert_eq!(check_llm_command("  "), CommandType::Empty);
     }
 
     #[test]
     fn test_check_command_type_jinx() {
-        match check_command_type("/search hello world") {
+        match check_llm_command("/search hello world") {
             CommandType::Jinx { name, args } => {
                 assert_eq!(name, "search");
                 assert_eq!(args, "hello world");
@@ -208,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_check_command_type_jinx_no_args() {
-        match check_command_type("/help") {
+        match check_llm_command("/help") {
             CommandType::Jinx { name, args } => {
                 assert_eq!(name, "help");
                 assert_eq!(args, "");
@@ -219,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_check_command_type_delegate() {
-        match check_command_type("@corca what is the weather") {
+        match check_llm_command("@corca what is the weather") {
             CommandType::Delegate { npc_name, message } => {
                 assert_eq!(npc_name, "corca");
                 assert_eq!(message, "what is the weather");
@@ -231,15 +254,15 @@ mod tests {
     #[test]
     fn test_check_command_type_bash() {
         assert!(matches!(
-            check_command_type("ls -la"),
+            check_llm_command("ls -la"),
             CommandType::Bash(_)
         ));
         assert!(matches!(
-            check_command_type("git status"),
+            check_llm_command("git status"),
             CommandType::Bash(_)
         ));
         assert!(matches!(
-            check_command_type("cargo build"),
+            check_llm_command("cargo build"),
             CommandType::Bash(_)
         ));
     }
@@ -247,11 +270,11 @@ mod tests {
     #[test]
     fn test_check_command_type_llm_query() {
         assert!(matches!(
-            check_command_type("what is the meaning of life"),
+            check_llm_command("what is the meaning of life"),
             CommandType::LlmQuery(_)
         ));
         assert!(matches!(
-            check_command_type("explain quantum computing"),
+            check_llm_command("explain quantum computing"),
             CommandType::LlmQuery(_)
         ));
     }

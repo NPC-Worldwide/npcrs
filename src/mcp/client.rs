@@ -1,6 +1,6 @@
 use crate::error::{NpcError, Result};
 use crate::mcp::McpTool;
-use crate::npc::McpServerSpec;
+use crate::npc_compiler::McpServerSpec;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};

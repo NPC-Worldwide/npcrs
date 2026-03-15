@@ -4,7 +4,7 @@
 //! Pass 2: Merge consecutive same-role messages.
 //! Pass 3: Strip trailing assistant messages.
 
-use crate::llm::Message;
+use crate::r#gen::Message;
 
 /// Sanitize messages before sending to an LLM provider.
 ///
@@ -105,7 +105,7 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{ToolCall, ToolCallFunction};
+    use crate::r#gen::{ToolCall, ToolCallFunction};
 
     #[test]
     fn test_removes_empty_messages() {

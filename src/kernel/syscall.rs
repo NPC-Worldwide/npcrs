@@ -8,7 +8,7 @@
 //! 5. Returns the result
 
 use crate::error::{NpcError, Result};
-use crate::jinx;
+use crate::npc_compiler;
 use crate::kernel::Kernel;
 use crate::process::Pid;
 use std::collections::HashMap;
@@ -71,7 +71,7 @@ pub async fn execute_syscall(
         args.len()
     );
 
-    let result = jinx::execute_jinx(jinx, args, &kernel.jinxes).await?;
+    let result = npc_compiler::execute_jinx(jinx, args, &kernel.jinxes).await?;
 
     // 6. Record execution
     let conv_id = kernel.processes.get(&pid)

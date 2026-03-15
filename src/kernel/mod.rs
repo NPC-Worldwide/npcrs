@@ -16,13 +16,13 @@ pub use syscall::*;
 use crate::drivers::DriverManager;
 use crate::error::{NpcError, Result};
 use crate::ipc::IpcBus;
-use crate::jinx::{self, Jinx};
-use crate::llm::Message;
+use crate::npc_compiler::{self, Jinx};
+use crate::r#gen::Message;
 use crate::memory::CommandHistory;
-use crate::npc::Npc;
+use crate::npc_compiler::Npc;
 use crate::process::{Capabilities, Pid, Process, ProcessState};
 use crate::scheduler::Scheduler;
-use crate::team::Team;
+use crate::npc_compiler::Team;
 use crate::vfs::Vfs;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -155,10 +155,7 @@ impl Kernel {
         }
         messages.push(Message::user(input));
 
-        let response = self
-            .drivers
-            .llm()
-            .chat_completion(
+        let response = crate::r#gen::get_genai_response(
                 &process.npc.resolved_provider(),
                 &process.npc.resolved_model(),
                 &messages,
@@ -202,8 +199,8 @@ impl Kernel {
         pid: Pid,
         input: &str,
     ) -> Result<String> {
-        use crate::llm::sanitize::sanitize_messages;
-        use crate::llm::cost::calculate_cost;
+        use crate::r#gen::sanitize::sanitize_messages;
+        use crate::r#gen::cost::calculate_cost;
 
         // Extract what we need from the process, then drop the borrow
         let (model, provider, system, api_url, npc_name, mut tool_defs, executors) = {
@@ -301,10 +298,9 @@ impl Kernel {
             );
 
             // LLM call
-            let response = self
-                .drivers
-                .llm()
-                .chat_completion(&provider, &model, &messages, tools, api_url.as_deref())
+            let response = crate::r#gen::get_genai_response(
+                    &provider, &model, &messages, tools, api_url.as_deref(),
+                )
                 .await?;
 
             // Accumulate usage
@@ -418,7 +414,7 @@ impl Kernel {
         &self,
         name: &str,
         args: &HashMap<String, String>,
-        executors: &HashMap<String, crate::npc::ToolExecutor>,
+        executors: &HashMap<String, crate::npc_compiler::ToolExecutor>,
     ) -> String {
         match name {
             "sh" => {
@@ -500,9 +496,9 @@ impl Kernel {
             // Fallback: jinx engine
             _ => {
                 match executors.get(name) {
-                    Some(crate::npc::ToolExecutor::Jinx(jname)) => {
+                    Some(crate::npc_compiler::ToolExecutor::Jinx(jname)) => {
                         if let Some(j) = self.jinxes.get(jname) {
-                            match jinx::execute_jinx(j, args, &self.jinxes).await {
+                            match npc_compiler::execute_jinx(j, args, &self.jinxes).await {
                                 Ok(r) => r.output,
                                 Err(e) => format!("Jinx error: {}", e),
                             }

@@ -7,7 +7,7 @@ use crate::kernel::Kernel;
 use crate::memory::CommandHistory;
 use crate::process::Capabilities;
 use crate::scheduler::Scheduler;
-use crate::team;
+use crate::npc_compiler;
 use crate::vfs::Vfs;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
@@ -25,7 +25,7 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
     tracing::info!("kernel: booting from {}", team_dir);
 
     // 1. Load the team (our "disk image")
-    let team = team::load_team_from_directory(team_dir)?;
+    let team = npc_compiler::load_team_from_directory(team_dir)?;
     let jinxes = team.jinxes.clone();
 
     tracing::info!(
@@ -63,7 +63,7 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
         .team
         .lead_npc()
         .cloned()
-        .unwrap_or_else(|| crate::npc::Npc::new("init", "You are the init process. Coordinate the system."));
+        .unwrap_or_else(|| crate::npc_compiler::Npc::new("init", "You are the init process. Coordinate the system."));
 
     kernel.spawn_init(init_npc);
     tracing::info!("kernel: init process spawned (pid 0)");

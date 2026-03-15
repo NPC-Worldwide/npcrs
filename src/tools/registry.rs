@@ -1,5 +1,5 @@
 use crate::error::{NpcError, Result};
-use crate::llm::{FunctionDef, Message, ToolCall, ToolDef};
+use crate::r#gen::{FunctionDef, Message, ToolCall, ToolDef};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -216,7 +216,7 @@ pub fn flatten_tool_messages(messages: &[Message]) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{ToolCall, ToolCallFunction};
+    use crate::r#gen::{ToolCall, ToolCallFunction};
 
     #[test]
     fn test_tool_builder() {

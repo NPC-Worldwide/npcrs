@@ -1,23 +1,15 @@
-//! NPC agent definition, loading, tool resolution, and agent subclasses.
-
-mod loader;
-mod types;
-pub mod agents;
-
-pub use loader::load_npc_from_file;
-pub use types::*;
-pub use agents::{Agent, ToolAgent, CodingAgent};
+//! NPC impl block — system prompt, tool resolution, model resolution.
 
 use crate::error::Result;
-use crate::jinx::Jinx;
-use crate::llm::{self, LlmClient, Message, ToolDef};
+use crate::npc_compiler::{Jinx, Npc, ToolExecutor, McpServerSpec};
+use crate::r#gen::{Message, ToolDef, LlmResponse};
 use std::collections::HashMap;
 use std::path::Path;
 
 impl Npc {
     /// Load an NPC from a .npc YAML file.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        load_npc_from_file(path)
+        super::npc_loader::load_npc_from_file(path)
     }
 
     /// Create a minimal NPC with just a name and directive.
@@ -84,18 +76,16 @@ impl Npc {
     }
 
     /// Get an LLM response for a prompt, with tool calling support.
+    /// Uses the global standalone chat_completion function (no client needed).
     pub async fn get_response(
         &self,
-        client: &LlmClient,
         messages: &[Message],
         tools: Option<&[ToolDef]>,
-    ) -> Result<llm::LlmResponse> {
+    ) -> Result<LlmResponse> {
         let model = self.resolved_model();
         let provider = self.resolved_provider();
 
-        client
-            .chat_completion(&provider, &model, messages, tools, self.api_url.as_deref())
-            .await
+        crate::r#gen::get_genai_response(&provider, &model, messages, tools, self.api_url.as_deref()).await
     }
 
     /// Model to use, falling back to env vars then defaults.

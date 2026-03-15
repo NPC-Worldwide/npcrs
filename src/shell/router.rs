@@ -1,4 +1,4 @@
-use crate::jinx::Jinx;
+use crate::npc_compiler::Jinx;
 use std::collections::HashMap;
 
 /// Command router that maps slash commands to jinx executors.

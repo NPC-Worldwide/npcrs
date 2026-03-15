@@ -1,25 +1,13 @@
-//! Jinx workflow templates - the tool/skill system.
-//!
-//! A Jinx is a YAML-defined workflow with typed inputs and executable steps.
-//! Steps can run bash commands, execute via Tera templates, or delegate to
-//! other jinxes. The Rust runtime handles template rendering and step dispatch,
-//! deferring to Python only for `engine: python` steps.
-
-mod loader;
-mod executor;
-mod types;
-
-pub use loader::*;
-pub use executor::*;
-pub use types::*;
+//! Jinx impl block — tool definition conversion.
 
 use crate::error::Result;
-use crate::llm::ToolDef;
+use crate::r#gen::ToolDef;
+use crate::npc_compiler::{Jinx, JinxInput};
 
 impl Jinx {
     /// Load a Jinx from a .jinx YAML file.
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        loader::load_jinx_from_file(path)
+        super::jinx_loader::load_jinx_from_file(path)
     }
 
     /// Convert this Jinx to an OpenAI-compatible tool definition for LLM tool calling.
@@ -54,7 +42,7 @@ impl Jinx {
 
         Some(ToolDef {
             r#type: "function".to_string(),
-            function: crate::llm::FunctionDef {
+            function: crate::r#gen::FunctionDef {
                 name: self.name.clone(),
                 description: Some(self.description.clone()),
                 parameters: serde_json::json!({

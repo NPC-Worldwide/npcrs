@@ -243,7 +243,7 @@ struct DeserializedKg {
 /// Prompts the LLM to extract entities and relationships as JSON, then
 /// parses them into a new KnowledgeGraph.
 pub async fn kg_initial(
-    client: &crate::llm::LlmClient,
+    
     text: &str,
     model: &str,
     provider: &str,
@@ -265,9 +265,9 @@ Text:
         text
     );
 
-    let messages = vec![crate::llm::Message::user(prompt)];
+    let messages = vec![crate::r#gen::Message::user(prompt)];
     let response = client
-        .chat_completion(provider, model, &messages, None, None)
+        .crate::llm_funcs::get_llm_response(provider, model, &messages, None, None)
         .await?;
 
     let content = response
@@ -283,7 +283,7 @@ Text:
 /// Prompts the LLM to extract new entities and relationships from `new_text`,
 /// considering what already exists in the KG.
 pub async fn kg_evolve_incremental(
-    client: &crate::llm::LlmClient,
+    
     kg: &mut KnowledgeGraph,
     new_text: &str,
     model: &str,
@@ -321,9 +321,9 @@ New text:
         existing_summary, new_text
     );
 
-    let messages = vec![crate::llm::Message::user(prompt)];
+    let messages = vec![crate::r#gen::Message::user(prompt)];
     let response = client
-        .chat_completion(provider, model, &messages, None, None)
+        .crate::llm_funcs::get_llm_response(provider, model, &messages, None, None)
         .await?;
 
     let content = response

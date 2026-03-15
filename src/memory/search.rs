@@ -19,7 +19,7 @@ pub struct MemorySearchResult {
 ///
 /// Computes the embedding of `query`, then compares against all stored embeddings
 /// in the `npc_memories` table, returning the top-k most similar results.
-pub async fn search_memories_by_embedding(
+pub async fn search_similar_texts(
     query: &str,
     db_path: &str,
     model: &str,
