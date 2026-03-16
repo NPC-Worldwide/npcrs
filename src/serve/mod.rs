@@ -116,9 +116,7 @@ async fn handle_connection(
                 let system = npc.system_prompt(state.team.context.as_deref());
                 let messages = vec![Message::system(system), Message::user(input)];
 
-                match state
-                    .llm_client
-                    .crate::llm_funcs::get_llm_response(
+                match crate::r#gen::get_genai_response(
                         &npc.resolved_provider(),
                         &npc.resolved_model(),
                         &messages,

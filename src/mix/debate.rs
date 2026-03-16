@@ -90,8 +90,7 @@ pub async fn debate(
                 Message::user(&prompt),
             ];
 
-            let response = client
-                .crate::llm_funcs::get_llm_response(
+            let response = crate::r#gen::get_genai_response(
                     &provider,
                     &model,
                     &messages,
@@ -150,8 +149,7 @@ async fn generate_summary(
         Message::user(&prompt),
     ];
 
-    let response = client
-        .crate::llm_funcs::get_llm_response(
+    let response = crate::r#gen::get_genai_response(
             &provider,
             &model,
             &messages,

@@ -266,8 +266,7 @@ Text:
     );
 
     let messages = vec![crate::r#gen::Message::user(prompt)];
-    let response = client
-        .crate::llm_funcs::get_llm_response(provider, model, &messages, None, None)
+    let response = crate::r#gen::get_genai_response(provider, model, &messages, None, None)
         .await?;
 
     let content = response
@@ -322,8 +321,7 @@ New text:
     );
 
     let messages = vec![crate::r#gen::Message::user(prompt)];
-    let response = client
-        .crate::llm_funcs::get_llm_response(provider, model, &messages, None, None)
+    let response = crate::r#gen::get_genai_response(provider, model, &messages, None, None)
         .await?;
 
     let content = response

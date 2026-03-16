@@ -54,8 +54,7 @@ pub async fn infer_matrix(
         }
         messages.push(Message::user(prompt));
 
-        let result = client
-            .crate::llm_funcs::get_llm_response(provider, model, &messages, None, None)
+        let result = crate::r#gen::get_genai_response(provider, model, &messages, None, None)
             .await;
 
         let elapsed = start.elapsed().as_millis() as u64;
