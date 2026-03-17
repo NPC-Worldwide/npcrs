@@ -27,7 +27,7 @@ reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], defau
 # Multi-provider LLM client (OpenAI, Anthropic, Gemini, Ollama, etc.)
 genai = "0.5"
 
-# Local GGUF inference (llama.cpp)
+# Local GGUF inference (llama.cpp) — optional, requires libclang
 llama-cpp-2 = { version = "0.1", optional = true }
 
 # SSE parsing for streaming
@@ -79,9 +79,10 @@ shellexpand = "3"
 walkdir = "2"
 
 [features]
-default = ["ffi"]
+default = ["ffi", "llamacpp"]
 ffi = []
-python = []  # Future: PyO3 embedding for python jinx steps
+llamacpp = ["llama-cpp-2"]
+python = []
 
 [dev-dependencies]
 tempfile = "3.27.0"

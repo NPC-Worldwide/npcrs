@@ -52,15 +52,38 @@ pub async fn get_llm_response(
     // Sanitize
     let clean = crate::r#gen::sanitize::sanitize_messages(full_messages);
 
-    // Call LLM via gen::response (internal genai dispatch)
-    let response = crate::r#gen::get_genai_response(
-        &resolved_provider,
-        &resolved_model,
-        &clean,
-        tools,
-        npc.and_then(|n| n.api_url.as_deref()),
-    )
-    .await?;
+    // Dispatch: local GGUF or remote API
+    let response = {
+        #[cfg(feature = "llamacpp")]
+        {
+            if resolved_provider == "llamacpp" || resolved_model.ends_with(".gguf") {
+                let model_path = resolved_model.clone();
+                let msgs = clean.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::r#gen::get_llamacpp_response(&model_path, &msgs, 512, 0.7, 4096, -1)
+                })
+                .await
+                .map_err(|e| crate::error::NpcError::LlmRequest(format!("spawn_blocking: {}", e)))??
+            } else {
+                crate::r#gen::get_genai_response(
+                    &resolved_provider, &resolved_model, &clean, tools,
+                    npc.and_then(|n| n.api_url.as_deref()),
+                ).await?
+            }
+        }
+        #[cfg(not(feature = "llamacpp"))]
+        {
+            if resolved_model.ends_with(".gguf") {
+                return Err(crate::error::NpcError::LlmRequest(
+                    "Local GGUF inference requires the 'llamacpp' feature. Build with: cargo build --features llamacpp".into()
+                ));
+            }
+            crate::r#gen::get_genai_response(
+                &resolved_provider, &resolved_model, &clean, tools,
+                npc.and_then(|n| n.api_url.as_deref()),
+            ).await?
+        }
+    };
 
     // Build result matching npcpy's return dict
     let usage_info = response.usage.as_ref().map(|u| UsageInfo {

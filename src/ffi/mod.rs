@@ -248,16 +248,59 @@ pub extern "C" fn npcrs_shell_process_command(
     let state = unsafe { &mut *state };
     let input = unsafe { from_c_str(input) };
 
+    // Add user message
+    state.messages.push(crate::r#gen::Message::user(&input));
+
     let rt = tokio::runtime::Runtime::new().unwrap();
-    // TODO: route through kernel exec or llm_funcs::get_llm_response
-    match rt.block_on(crate::r#gen::get_genai_response(
-        &state.npc.resolved_provider(),
-        &state.npc.resolved_model(),
+    match rt.block_on(crate::llm_funcs::get_llm_response(
+        &input,
+        Some(&state.npc),
+        None,
+        None,
+        None,
         &state.messages,
         None,
-        state.npc.api_url.as_deref(),
     )) {
-        Ok(resp) => to_c_string(resp.message.content.as_deref().unwrap_or("")),
+        Ok(result) => {
+            let output = result.response.as_deref().unwrap_or("");
+            // Update state messages
+            state.messages = result.messages;
+            to_c_string(output)
+        }
         Err(e) => to_c_string(&format!("Error: {}", e)),
     }
+}
+
+/// Set the model and provider for a shell state.
+/// For local GGUF: set model to the file path, provider to "llamacpp".
+#[unsafe(no_mangle)]
+pub extern "C" fn npcrs_shell_set_model(
+    state: *mut ShellState,
+    model: *const c_char,
+    provider: *const c_char,
+) {
+    if state.is_null() {
+        return;
+    }
+    let state = unsafe { &mut *state };
+    if !model.is_null() {
+        state.npc.model = Some(unsafe { from_c_str(model) });
+    }
+    if !provider.is_null() {
+        state.npc.provider = Some(unsafe { from_c_str(provider) });
+    }
+}
+
+/// Set an API key as an environment variable.
+#[unsafe(no_mangle)]
+pub extern "C" fn npcrs_set_api_key(
+    key_name: *const c_char,
+    key_value: *const c_char,
+) {
+    if key_name.is_null() || key_value.is_null() {
+        return;
+    }
+    let name = unsafe { from_c_str(key_name) };
+    let value = unsafe { from_c_str(key_value) };
+    unsafe { std::env::set_var(&name, &value) };
 }
