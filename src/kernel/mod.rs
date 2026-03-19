@@ -448,13 +448,16 @@ impl Kernel {
             "web_search" => {
                 let query = args.get("query").or_else(|| args.get("search_query")).cloned().unwrap_or_default();
                 if query.is_empty() { return "(no query)".to_string(); }
-                let cmd = format!("curl -sL 'https://lite.duckduckgo.com/lite/?q={}' | sed -n 's/.*<a[^>]*class=\"result-link\"[^>]*>\\(.*\\)<\\/a>.*/\\1/p' | head -5", query.replace(' ', "+").replace('\'', ""));
-                match tokio::process::Command::new("bash").arg("-c").arg(&cmd).output().await {
-                    Ok(out) => {
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        if stdout.trim().is_empty() { format!("No results for '{}'", query) }
-                        else { format!("Results for '{}':\n{}", query, stdout) }
+                let provider = args.get("provider").map(|s| s.as_str()).unwrap_or("duckduckgo");
+                match crate::data::web::search_web(&query, 5, provider, None).await {
+                    Ok(results) if !results.is_empty() => {
+                        let mut out = format!("Web search results for '{}':\n\n", query);
+                        for (i, r) in results.iter().enumerate() {
+                            out.push_str(&format!("{}. {}\n   {}\n   {}\n\n", i + 1, r.title, r.url, r.snippet));
+                        }
+                        out
                     }
+                    Ok(_) => format!("No results for '{}'", query),
                     Err(e) => format!("Search failed: {}", e),
                 }
             }
@@ -491,7 +494,17 @@ impl Kernel {
             "delegate" | "convene" => {
                 let target = args.get("npc_name").or_else(|| args.get("target")).cloned().unwrap_or_default();
                 let msg = args.get("message").or_else(|| args.get("query")).cloned().unwrap_or_default();
-                format!("[delegation to @{}: {}]", target, msg)
+                // Delegate via llm_funcs::get_llm_response on the target NPC
+                if let Some(target_npc) = self.team.get_npc(&target).cloned() {
+                    match crate::llm_funcs::get_llm_response(
+                        &msg, Some(&target_npc), None, None, None, &[], self.team.context.as_deref(),
+                    ).await {
+                        Ok(result) => format!("@{} responded: {}", target, result.response.unwrap_or_default()),
+                        Err(e) => format!("Delegation to @{} failed: {}", target, e),
+                    }
+                } else {
+                    format!("NPC '{}' not found in team. Available: {:?}", target, self.team.npc_names())
+                }
             }
             // Fallback: jinx engine
             _ => {
