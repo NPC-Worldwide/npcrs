@@ -43,7 +43,7 @@ once_cell = "1"
 pin-project-lite = "0.2"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "postgres", "mysql", "chrono", "uuid"] }
 
 # Knowledge graph
 petgraph = "0.7"
