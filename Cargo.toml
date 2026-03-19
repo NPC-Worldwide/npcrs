@@ -22,7 +22,7 @@ tera = "1"
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client for LLM APIs
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "multipart"], default-features = false }
 
 # Multi-provider LLM client (OpenAI, Anthropic, Gemini, Ollama, etc.)
 genai = "0.5"
@@ -77,6 +77,13 @@ shellexpand = "3"
 
 # For reading dirs
 walkdir = "2"
+
+# File format parsing (pure Rust)
+calamine = "0.26"
+zip = "2"
+
+# URL encoding for web search
+urlencoding = "2"
 
 [features]
 default = ["ffi", "llamacpp"]
