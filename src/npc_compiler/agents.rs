@@ -1,18 +1,9 @@
-//! Agent subclasses mirroring npcpy's Agent/ToolAgent/CodingAgent hierarchy.
-//!
-//! ```text
-//! NPC (base) — raw agent with name, directive, model/provider
-//!   └─ Agent — NPC + default tool set (sh, python, edit_file, load_file, web_search, file_search, stop, chat)
-//!        └─ ToolAgent — Agent + user-provided tool functions and/or MCP servers
-//!        └─ CodingAgent — Agent + language setting, auto-detects + executes code blocks
-//! ```
 
 use crate::error::Result;
 use crate::r#gen::{Message, ToolDef};
 use crate::npc_compiler::Npc;
 use crate::tools::{RegisteredTool, ToolBuilder, ToolRegistry};
 
-/// Agent — NPC + default tool set.
 pub struct Agent {
     pub npc: Npc,
     pub messages: Vec<Message>,
@@ -34,7 +25,6 @@ impl Agent {
         Self::new(Npc::new(name, directive))
     }
 
-    /// Run the agent loop — no client parameter needed, uses standalone chat_completion.
     pub async fn run(&mut self, input: &str) -> Result<String> {
         let system = self.npc.system_prompt(None);
         let mut msgs = vec![Message::system(system)];
@@ -78,7 +68,6 @@ impl Agent {
     }
 }
 
-/// ToolAgent — Agent + user-provided tool functions and/or MCP servers.
 pub struct ToolAgent {
     pub agent: Agent,
 }
@@ -92,13 +81,11 @@ impl ToolAgent {
         Self { agent }
     }
 
-    /// Run the tool agent loop — no client parameter needed.
     pub async fn run(&mut self, input: &str) -> Result<String> {
         self.agent.run(input).await
     }
 }
 
-/// CodingAgent — Agent + language setting, auto-executes code blocks in responses.
 pub struct CodingAgent {
     pub agent: Agent,
     pub language: String,
@@ -114,7 +101,6 @@ impl CodingAgent {
         }
     }
 
-    /// Extract fenced code blocks matching this agent's language.
     pub fn extract_code_blocks(&self, text: &str) -> Vec<String> {
         let pattern = format!(r"```(?i:{})\s*\n([\s\S]*?)```", regex::escape(&self.language));
         let re = regex::Regex::new(&pattern).unwrap_or_else(|_| {
@@ -125,7 +111,6 @@ impl CodingAgent {
             .collect()
     }
 
-    /// Execute a code block.
     pub async fn execute_code(&self, code: &str) -> String {
         let (cmd, args): (&str, Vec<&str>) = match self.language.as_str() {
             "python" => ("python3", vec!["-c", code]),
@@ -152,7 +137,6 @@ impl CodingAgent {
         }
     }
 
-    /// Run the coding agent loop — no client parameter needed.
     pub async fn run(&mut self, input: &str) -> Result<String> {
         let mut current_input = input.to_string();
         let mut last_response = String::new();
@@ -182,9 +166,7 @@ impl CodingAgent {
     }
 }
 
-/// Register the default tools (sh, python, edit_file, load_file, web_search, file_search, stop, chat).
 fn register_default_tools(registry: &mut ToolRegistry) {
-    // sh
     registry.register(
         ToolBuilder::new("sh")
             .description("Execute a bash/shell command and return output")
@@ -225,7 +207,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // python
     registry.register(
         ToolBuilder::new("python")
             .description("Execute Python code and return output")
@@ -257,7 +238,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // edit_file
     registry.register(
         ToolBuilder::new("edit_file")
             .description("Edit a file: create, append, or replace text")
@@ -321,7 +301,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // load_file
     registry.register(
         ToolBuilder::new("load_file")
             .description("Read and return file contents")
@@ -350,7 +329,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // web_search
     registry.register(
         ToolBuilder::new("web_search")
             .description("Search the web")
@@ -379,7 +357,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // file_search
     registry.register(
         ToolBuilder::new("file_search")
             .description("Search for files containing a pattern")
@@ -406,7 +383,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // stop
     registry.register(
         ToolBuilder::new("stop")
             .description("Signal that the task is complete")
@@ -423,7 +399,6 @@ fn register_default_tools(registry: &mut ToolRegistry) {
             })),
     );
 
-    // chat
     registry.register(
         ToolBuilder::new("chat")
             .description("Respond directly to the user")

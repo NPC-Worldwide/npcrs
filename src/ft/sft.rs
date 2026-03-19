@@ -1,7 +1,3 @@
-//! SFT (Supervised Fine-Tuning) — mirrors npcpy.ft.sft.
-//!
-//! Full fine-tuning requires PyTorch/transformers which aren't available in Rust.
-//! This provides the API surface for compatibility.
 
 use crate::error::{NpcError, Result};
 

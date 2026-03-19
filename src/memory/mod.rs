@@ -1,4 +1,3 @@
-//! Conversation history, knowledge graph, embeddings, and memory search.
 
 mod history;
 mod knowledge_graph;

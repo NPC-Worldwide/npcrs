@@ -1,4 +1,3 @@
-//! Desktop automation — mirrors npcpy.work.desktop
 
 use crate::error::Result;
 use std::collections::HashMap;

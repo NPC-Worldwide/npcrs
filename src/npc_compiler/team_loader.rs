@@ -1,23 +1,9 @@
 use crate::error::{NpcError, Result};
 
-
 use crate::npc_compiler::{Team, TeamCtx};
 use std::path::Path;
 use walkdir::WalkDir;
 
-/// Load a Team from a directory.
-///
-/// Expected structure:
-/// ```text
-/// npc_team/
-///   ├── team.ctx (or <name>.ctx)
-///   ├── *.npc files
-///   └── jinxes/
-///       ├── bin/
-///       ├── lib/
-///       ├── modes/
-///       └── ...
-/// ```
 pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     let dir = dir.as_ref();
     let mut team = Team {
@@ -29,7 +15,6 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         return Ok(team);
     }
 
-    // 1. Load .ctx file (team context)
     if let Some(ctx) = find_and_load_ctx(dir)? {
         team.context = ctx.context;
         team.model = ctx.model;
@@ -43,7 +28,6 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         team.mcp_servers = ctx.mcp_servers;
     }
 
-    // 2. Load all .npc files
     for entry in WalkDir::new(dir)
         .max_depth(1)
         .follow_links(true)
@@ -54,7 +38,6 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         if path.extension().is_some_and(|ext| ext == "npc") {
             match super::load_npc_from_file(path) {
                 Ok(mut loaded_npc) => {
-                    // Inherit team defaults if NPC doesn't specify
                     if loaded_npc.model.is_none() {
                         loaded_npc.model = team.model.clone();
                     }
@@ -70,32 +53,28 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         }
     }
 
-    // 3. Load jinxes from jinxes/ directory
     let jinxes_dir = dir.join("jinxes");
     if jinxes_dir.exists() {
         team.jinxes = super::load_jinxes_from_directory(&jinxes_dir)?;
     }
 
-    // Also check legacy "jinxs/" directory
     let legacy_dir = dir.join("jinxs");
     if legacy_dir.exists() && !jinxes_dir.exists() {
         team.jinxes = super::load_jinxes_from_directory(&legacy_dir)?;
     }
 
-    // 4. Load agents from agents.md and agents/ directory
-    let agents_md = dir.join("agents.md");
+    let project_root = dir.parent().unwrap_or(dir);
+    let agents_md = project_root.join("agents.md");
     if agents_md.exists() {
         if let Ok(content) = std::fs::read_to_string(&agents_md) {
             load_agents_from_md(&content, &team.model, &team.provider, &mut team.npcs);
         }
     }
-    let agents_dir = dir.join("agents");
+    let agents_dir = project_root.join("agents");
     if agents_dir.is_dir() {
         load_agents_from_dir(&agents_dir, &team.model, &team.provider, &mut team.npcs);
     }
 
-    // 5. Wire up NPC jinx references
-    // If an NPC has jinx_names: ["*"], give it all team jinxes
     for npc in team.npcs.values_mut() {
         if npc.jinx_names.iter().any(|n| n == "*") {
             npc.jinx_names = team.jinxes.keys().cloned().collect();
@@ -113,9 +92,7 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     Ok(team)
 }
 
-/// Find and load the .ctx file from a team directory.
 fn find_and_load_ctx(dir: &Path) -> Result<Option<TeamCtx>> {
-    // Look for team.ctx first, then any .ctx file
     let candidates = ["team.ctx", "npcsh.ctx"];
 
     for name in &candidates {
@@ -125,7 +102,6 @@ fn find_and_load_ctx(dir: &Path) -> Result<Option<TeamCtx>> {
         }
     }
 
-    // Fallback: find any .ctx file
     for entry in std::fs::read_dir(dir).map_err(|e| NpcError::FileLoad {
         path: dir.display().to_string(),
         source: e,
@@ -143,8 +119,6 @@ fn find_and_load_ctx(dir: &Path) -> Result<Option<TeamCtx>> {
     Ok(None)
 }
 
-/// Load agents from an agents.md file.
-/// Format: ## heading = agent name, body = directive.
 fn load_agents_from_md(
     content: &str,
     team_model: &Option<String>,
@@ -181,8 +155,6 @@ fn load_agents_from_md(
     }
 }
 
-/// Load agents from an agents/ directory. Each .md file = one agent.
-/// Filename (minus .md) = agent name. Supports YAML frontmatter for model/provider.
 fn load_agents_from_dir(
     dir: &Path,
     team_model: &Option<String>,
@@ -214,7 +186,6 @@ fn load_agents_from_dir(
         let mut agent_name = name.clone();
         let directive;
 
-        // Check for YAML frontmatter
         if content.starts_with("---") {
             let parts: Vec<&str> = content.splitn(3, "---").collect();
             if parts.len() >= 3 {
@@ -244,7 +215,6 @@ fn load_agents_from_dir(
     }
 }
 
-/// Load a .ctx YAML file.
 fn load_ctx_file(path: &Path) -> Result<TeamCtx> {
     let raw = std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad {
         path: path.display().to_string(),

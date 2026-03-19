@@ -1,24 +1,17 @@
-//! Conversation history — mirrors npcpy's conversation_history schema exactly.
-//!
-//! Uses the same table names, column names, and UUID-based IDs as the Python version
-//! so both can share the same SQLite database.
 
 use crate::error::Result;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::path::Path;
 
-/// Generate a UUID message ID (matches npcpy's generate_message_id).
 pub fn generate_message_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// Start a new conversation (matches npcpy's start_new_conversation).
 pub fn start_new_conversation() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// SQLite-backed conversation history matching npcpy's CommandHistory.
 pub struct CommandHistory {
     conn: Connection,
 }
@@ -187,7 +180,6 @@ impl CommandHistory {
         Ok(())
     }
 
-    /// Save a conversation message (mirrors npcpy's save_conversation_message).
     pub fn save_conversation_message(
         &self,
         conversation_id: &str,
@@ -237,7 +229,6 @@ impl CommandHistory {
         Ok(message_id)
     }
 
-    /// Save a jinx execution record.
     pub fn save_jinx_execution(
         &self,
         conversation_id: &str,
@@ -275,7 +266,6 @@ impl CommandHistory {
         Ok(())
     }
 
-    /// Load messages for a conversation (ordered by id).
     pub fn load_conversation_messages(
         &self,
         conversation_id: &str,
@@ -309,7 +299,6 @@ impl CommandHistory {
         Ok(messages)
     }
 
-    /// Get the last message_id in a conversation (for linking).
     pub fn get_last_message_id(&self, conversation_id: &str) -> Result<Option<String>> {
         let result = self.conn.query_row(
             "SELECT message_id FROM conversation_history WHERE conversation_id = ?1 ORDER BY id DESC LIMIT 1",
@@ -323,7 +312,6 @@ impl CommandHistory {
         }
     }
 
-    /// Get total token usage.
     pub fn total_usage(&self) -> Result<(u64, u64)> {
         let mut stmt = self.conn.prepare(
             "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM conversation_history",
@@ -333,8 +321,6 @@ impl CommandHistory {
         })?;
         Ok((input, output))
     }
-
-    // ── Memory management ──
 
     pub fn save_memory(&self, npc_name: &str, content: &str) -> Result<i64> {
         let now = Utc::now().to_rfc3339();
@@ -405,7 +391,6 @@ impl CommandHistory {
     }
 }
 
-/// A message from conversation_history.
 #[derive(Debug, Clone)]
 pub struct ConversationMessage {
     pub message_id: String,

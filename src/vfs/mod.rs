@@ -1,41 +1,10 @@
-//! Virtual Filesystem — unified view of real FS, memory, and knowledge.
-//!
-//! The VFS presents a single namespace:
-//!
-//! ```text
-//! /                          (root)
-//! ├── fs/                    (real filesystem, passthrough)
-//! ├── proc/                  (process info, like /proc in Linux)
-//! │   ├── 0/                 (pid 0 = init)
-//! │   │   ├── status         (process state, usage)
-//! │   │   ├── messages       (conversation history)
-//! │   │   └── env            (environment vars)
-//! │   └── 1/
-//! ├── dev/                   (devices = LLM providers)
-//! │   ├── openai             (OpenAI driver)
-//! │   ├── anthropic          (Anthropic driver)
-//! │   └── ollama             (Ollama driver)
-//! ├── sys/                   (kernel info)
-//! │   ├── stats              (kernel stats)
-//! │   ├── jinxes/            (available syscalls)
-//! │   └── team/              (team context)
-//! ├── mem/                   (knowledge graph + memories)
-//! │   ├── kg/                (knowledge graph entities)
-//! │   └── conversations/     (conversation history)
-//! └── tmp/                   (scratch space)
-//! ```
-//!
-//! This lets NPCs navigate the system with familiar path semantics.
 
 use crate::error::Result;
 use std::path::{Path, PathBuf};
 
-/// Virtual Filesystem.
 pub struct Vfs {
-    /// Root of the real filesystem mount (usually the team directory).
     fs_root: PathBuf,
 
-    /// Temp directory for scratch space.
     tmp_dir: PathBuf,
 }
 
@@ -48,7 +17,6 @@ impl Vfs {
         Self { fs_root, tmp_dir }
     }
 
-    /// Resolve a VFS path to a real action.
     pub fn resolve(&self, vfs_path: &str) -> VfsResolution {
         let path = vfs_path.trim_start_matches('/');
 
@@ -92,7 +60,6 @@ impl Vfs {
         }
     }
 
-    /// Read a file from the VFS.
     pub fn read_file(&self, vfs_path: &str) -> Result<String> {
         match self.resolve(vfs_path) {
             VfsResolution::RealPath(path) => {
@@ -112,7 +79,6 @@ impl Vfs {
         }
     }
 
-    /// Write a file to the VFS.
     pub fn write_file(&self, vfs_path: &str, content: &str) -> Result<()> {
         match self.resolve(vfs_path) {
             VfsResolution::RealPath(path) => {
@@ -141,7 +107,6 @@ impl Vfs {
         }
     }
 
-    /// List directory contents.
     pub fn list_dir(&self, vfs_path: &str) -> Result<Vec<String>> {
         match self.resolve(vfs_path) {
             VfsResolution::RealPath(path) => {
@@ -160,34 +125,23 @@ impl Vfs {
         }
     }
 
-    /// Get the real FS root.
     pub fn fs_root(&self) -> &Path {
         &self.fs_root
     }
 }
 
-/// Result of resolving a VFS path.
 #[derive(Debug)]
 pub enum VfsResolution {
-    /// Maps to a real filesystem path.
     RealPath(PathBuf),
-    /// A virtual (in-kernel) node.
     Virtual(VirtualNode),
-    /// A directory listing.
     Directory(Vec<String>),
-    /// Path doesn't exist.
     NotFound,
 }
 
-/// Virtual filesystem nodes (generated on-the-fly from kernel state).
 #[derive(Debug)]
 pub enum VirtualNode {
-    /// /proc/<pid>/... — process info.
     Proc(String),
-    /// /dev/<driver> — device/driver info.
     Dev(String),
-    /// /sys/... — kernel info.
     Sys(String),
-    /// /mem/... — knowledge graph / memory.
     Mem(String),
 }

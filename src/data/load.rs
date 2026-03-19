@@ -1,4 +1,3 @@
-//! File loading with type detection.
 
 use crate::error::{NpcError, Result};
 use std::path::Path;
@@ -11,7 +10,6 @@ pub struct FileContent {
     pub size: usize,
 }
 
-/// Load file contents with type detection.
 pub fn load_file_contents(path: &str) -> Result<FileContent> {
     let path_obj = Path::new(path);
     let ext = path_obj
@@ -53,16 +51,13 @@ fn extract_pdf_text(path: &str) -> String {
         .unwrap_or_else(|| format!("[PDF extraction failed for {}]", path))
 }
 
-/// Parse CSV to string.
 pub fn load_csv(path: &str) -> Result<String> { std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e }) }
 
-/// Parse JSON and pretty-print.
 pub fn load_json(path: &str) -> Result<String> {
     let data = std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e })?;
     match serde_json::from_str::<serde_json::Value>(&data) { Ok(val) => Ok(serde_json::to_string_pretty(&val).unwrap_or(data)), Err(_) => Ok(data) }
 }
 
-/// Load Excel via calamine (pure Rust).
 pub fn load_excel(path: &str) -> Result<String> {
     use calamine::{Reader, open_workbook_auto};
     let mut workbook = open_workbook_auto(path)
@@ -82,7 +77,6 @@ pub fn load_excel(path: &str) -> Result<String> {
     Ok(output)
 }
 
-/// Return image path info and base64.
 pub fn load_image(path: &str) -> Result<String> {
     let raw = std::fs::read(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e })?;
     use base64::Engine;
@@ -91,10 +85,8 @@ pub fn load_image(path: &str) -> Result<String> {
     Ok(format!("[Image: {} ({} bytes)]\ndata:image/{};base64,{}", path, raw.len(), ext, b64))
 }
 
-/// Load PDF text.
 pub fn load_pdf(path: &str) -> String { extract_pdf_text(path) }
 
-/// Load DOCX by parsing the OpenXML zip (pure Rust).
 pub fn load_docx(path: &str) -> Result<String> {
     let file = std::fs::File::open(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e })?;
     let mut archive = zip::ZipArchive::new(file)
@@ -103,24 +95,20 @@ pub fn load_docx(path: &str) -> Result<String> {
     if let Ok(mut doc_xml) = archive.by_name("word/document.xml") {
         let mut xml = String::new();
         std::io::Read::read_to_string(&mut doc_xml, &mut xml).ok();
-        // Extract text from <w:t> tags
         for cap in regex::Regex::new(r"<w:t[^>]*>(.*?)</w:t>").unwrap().captures_iter(&xml) {
             text.push_str(&cap[1]);
         }
-        // Paragraph breaks at </w:p>
         text = regex::Regex::new(r"</w:p>").unwrap().replace_all(&text, "\n").to_string();
     }
     Ok(text)
 }
 
-/// Load PPTX by parsing the OpenXML zip (pure Rust).
 pub fn load_pptx(path: &str) -> Result<String> {
     let file = std::fs::File::open(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e })?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| NpcError::Other(format!("PPTX zip open failed: {}", e)))?;
     let mut text = String::new();
     let tag_strip = regex::Regex::new(r"<[^>]+>").unwrap();
-    // Slides are ppt/slides/slide1.xml, slide2.xml, etc.
     for i in 0..archive.len() {
         if let Ok(entry) = archive.by_index(i) {
             let name = entry.name().to_string();
@@ -128,7 +116,6 @@ pub fn load_pptx(path: &str) -> Result<String> {
                 let mut xml = String::new();
                 let mut reader = std::io::BufReader::new(entry);
                 std::io::Read::read_to_string(&mut reader, &mut xml).ok();
-                // Extract text from <a:t> tags
                 for cap in regex::Regex::new(r"<a:t>(.*?)</a:t>").unwrap().captures_iter(&xml) {
                     text.push_str(&cap[1]);
                     text.push(' ');
@@ -140,23 +127,19 @@ pub fn load_pptx(path: &str) -> Result<String> {
     Ok(text)
 }
 
-/// Load HTML and strip tags.
 pub fn load_html(path: &str) -> Result<String> {
     let raw = std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e })?;
     Ok(super::text::strip_html(&raw))
 }
 
-/// Load and transcribe audio.
 pub fn load_audio(path: &str) -> Result<String> {
     match super::audio::transcribe_audio_file(path, None) { Ok(t) if !t.is_empty() => Ok(t), _ => Ok(format!("[Audio file at {}; no transcript]", path)) }
 }
 
-/// Load and summarize video.
 pub fn load_video(path: &str) -> Result<String> {
     match super::video::summarize_video_file(path, None, 600) { Ok(s) => Ok(s), Err(_) => Ok(format!("[Video file at {}]", path)) }
 }
 
-/// Chunk text into segments.
 pub fn chunk_text_simple(content: &str, chunk_size: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut start = 0;
@@ -170,7 +153,6 @@ pub fn chunk_text_simple(content: &str, chunk_size: usize) -> Vec<String> {
     chunks
 }
 
-/// Load and chunk file contents.
 pub fn load_file_contents_chunked(path: &str, chunk_size: Option<usize>) -> Vec<String> {
     let cs = chunk_size.unwrap_or(8000);
     match load_file_contents(path) {
@@ -179,7 +161,6 @@ pub fn load_file_contents_chunked(path: &str, chunk_size: Option<usize>) -> Vec<
     }
 }
 
-/// Extension category map.
 pub fn extension_category(ext: &str) -> &'static str {
     match ext.to_uppercase().as_str() {
         "PNG" | "JPG" | "JPEG" | "GIF" | "SVG" | "WEBP" | "BMP" | "TIFF" => "images",

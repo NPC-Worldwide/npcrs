@@ -1,8 +1,3 @@
-//! Server mode — HTTP REST API + MCP server.
-//!
-//! When the kernel boots with a team in server mode, it spawns both:
-//! 1. NPC HTTP server — REST API for chat, jinx execution, team management
-//! 2. MCP server — exposes team jinxes as MCP tools for external clients
 
 use crate::error::{NpcError, Result};
 use crate::npc_compiler;
@@ -12,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Server configuration.
 pub struct ServerConfig {
     pub http_port: u16,
     pub mcp_enabled: bool,
@@ -29,14 +23,12 @@ impl Default for ServerConfig {
     }
 }
 
-/// Shared server state.
 pub struct ServerState {
     pub team: Team,
     pub active_npc_name: String,
     pub conversations: HashMap<String, Vec<Message>>,
 }
 
-/// Start the HTTP server.
 pub async fn start_http_server(
     state: Arc<Mutex<ServerState>>,
     config: &ServerConfig,
@@ -63,7 +55,6 @@ pub async fn start_http_server(
     }
 }
 
-/// Handle a single HTTP connection.
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     state: Arc<Mutex<ServerState>>,
@@ -177,7 +168,6 @@ async fn handle_connection(
     Ok(())
 }
 
-/// Start MCP server over stdio (for external clients like Claude Code).
 pub async fn start_mcp_server(state: Arc<Mutex<ServerState>>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -318,7 +308,6 @@ pub async fn start_mcp_server(state: Arc<Mutex<ServerState>>) -> Result<()> {
     Ok(())
 }
 
-/// Start both HTTP and MCP servers.
 pub async fn start_servers(team: Team, config: ServerConfig) -> Result<()> {
     let active_npc = team
         .lead_npc()

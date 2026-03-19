@@ -1,42 +1,19 @@
-//! Vectorized operations over model populations.
-//!
-//! Mirrors `npcpy.npc_array` — run the same prompt across multiple models
-//! and collect/aggregate results. Useful for ensembling, benchmarking, and
-//! model comparison.
 
 use crate::error::Result;
 use crate::r#gen::Message;
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Result from a single model inference within an infer_matrix call.
 #[derive(Debug, Clone)]
 pub struct InferResult {
-    /// Model name that was used.
     pub model: String,
-    /// Provider that was used.
     pub provider: String,
-    /// The text response from the model.
     pub response: String,
-    /// Total tokens used (prompt + completion).
     pub tokens: u64,
-    /// Estimated cost in USD.
     pub cost: f64,
-    /// Latency in milliseconds.
     pub latency_ms: u64,
 }
 
-/// Run the same prompt across multiple models and collect results.
-///
-/// Each `(model, provider)` pair is called sequentially (the LlmClient is
-/// borrowed, not cloneable). Failed calls are captured in the response field
-/// rather than aborting the whole matrix.
-///
-/// # Arguments
-/// * `client` — The LLM client to use.
-/// * `prompt` — The user prompt to send to each model.
-/// * `models` — Slice of (model, provider) pairs.
-/// * `system_prompt` — Optional system prompt to prepend.
 pub async fn infer_matrix(
     
     prompt: &str,
@@ -99,11 +76,6 @@ pub async fn infer_matrix(
     Ok(results)
 }
 
-/// Simple majority vote across inference results.
-///
-/// Counts the frequency of each response (trimmed, case-insensitive) and
-/// returns the most common one. Ties are broken by first occurrence.
-/// Error responses (starting with "[ERROR]") are skipped.
 pub fn ensemble_vote(results: &[InferResult]) -> String {
     if results.is_empty() {
         return String::new();
@@ -134,7 +106,6 @@ pub fn ensemble_vote(results: &[InferResult]) -> String {
         .max_by_key(|k| *counts.get(k).unwrap_or(&0))
         .unwrap_or_default();
 
-    // Return the original (non-lowercased) response that matches
     results
         .iter()
         .find(|r| r.response.trim().to_lowercase() == best)
@@ -142,7 +113,6 @@ pub fn ensemble_vote(results: &[InferResult]) -> String {
         .unwrap_or_default()
 }
 
-/// Summary statistics for an infer_matrix run.
 #[derive(Debug, Clone)]
 pub struct MatrixStats {
     pub total_models: usize,
@@ -155,7 +125,6 @@ pub struct MatrixStats {
     pub max_latency_ms: u64,
 }
 
-/// Compute summary statistics over a set of inference results.
 pub fn matrix_stats(results: &[InferResult]) -> MatrixStats {
     let successful = results
         .iter()

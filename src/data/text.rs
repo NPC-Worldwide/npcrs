@@ -1,6 +1,4 @@
-//! Text processing utilities.
 
-/// Chunk text into overlapping segments.
 pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() || chunk_size == 0 {
@@ -20,7 +18,6 @@ pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
     chunks
 }
 
-/// Extract URLs from text.
 pub fn extract_urls(text: &str) -> Vec<String> {
     regex::Regex::new(r#"https?://[^\s<>"')\]]+"#)
         .unwrap()
@@ -29,7 +26,6 @@ pub fn extract_urls(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Strip HTML tags from text.
 pub fn strip_html(html: &str) -> String {
     regex::Regex::new(r"<[^>]+>")
         .unwrap()
@@ -37,7 +33,6 @@ pub fn strip_html(html: &str) -> String {
         .to_string()
 }
 
-/// Keyword-based RAG search over a file map. Returns (filename, snippet) pairs.
 pub fn rag_search(query: &str, text_data: &std::collections::HashMap<String, String>, similarity_threshold: f64) -> Vec<(String, String)> {
     let ql = query.to_lowercase();
     let qw: std::collections::HashSet<&str> = ql.split_whitespace().collect();
@@ -60,7 +55,6 @@ pub fn rag_search(query: &str, text_data: &std::collections::HashMap<String, Str
     results
 }
 
-/// Keyword-based RAG search on a single text string.
 pub fn rag_search_text(query: &str, text: &str, similarity_threshold: f64) -> Vec<String> {
     let ql = query.to_lowercase();
     let qw: std::collections::HashSet<&str> = ql.split_whitespace().collect();
@@ -81,7 +75,6 @@ pub fn rag_search_text(query: &str, text: &str, similarity_threshold: f64) -> Ve
     results
 }
 
-/// Load all text files in a directory recursively.
 pub fn load_all_files(directory: &str, extensions: Option<&[&str]>, depth: usize) -> std::collections::HashMap<String, String> {
     let default_exts = [".txt", ".md", ".py", ".java", ".c", ".cpp", ".html", ".css", ".js", ".ts", ".tsx", ".npc"];
     let exts = extensions.unwrap_or(&default_exts);

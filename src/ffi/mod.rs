@@ -1,30 +1,12 @@
-//! C-ABI FFI exports for Flutter/Dart integration.
-//!
-//! This module exposes npcrs functionality through a C-compatible interface
-//! that can be called from Dart via `dart:ffi`.
-//!
-//! ## Usage from Dart:
-//! ```dart
-//! final npcrs = DynamicLibrary.open('libnpcrs.so');
-//! final initTeam = npcrs.lookupFunction<...>('npcrs_team_load');
-//! ```
-//!
-//! ## Memory model:
-//! - Strings are returned as heap-allocated null-terminated C strings.
-//! - The caller must free them with `npcrs_free_string`.
-//! - Opaque handles are `Box::into_raw` pointers, freed with type-specific free functions.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
-
 use crate::memory::CommandHistory;
 use crate::npc_compiler::Npc;
 use crate::shell::{ShellMode, ShellState};
 use crate::npc_compiler::Team;
-
-// ─── Helpers ───
 
 fn to_c_string(s: &str) -> *mut c_char {
     CString::new(s).unwrap_or_default().into_raw()
@@ -37,7 +19,6 @@ unsafe fn from_c_str(ptr: *const c_char) -> String {
     unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string()
 }
 
-/// Free a string returned by npcrs.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -47,9 +28,6 @@ pub extern "C" fn npcrs_free_string(ptr: *mut c_char) {
     }
 }
 
-// ─── Team ───
-
-/// Load a team from a directory path. Returns an opaque handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_load(path: *const c_char) -> *mut Team {
     let path = unsafe { from_c_str(path) };
@@ -62,7 +40,6 @@ pub extern "C" fn npcrs_team_load(path: *const c_char) -> *mut Team {
     }
 }
 
-/// Free a team handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_free(team: *mut Team) {
     if !team.is_null() {
@@ -72,7 +49,6 @@ pub extern "C" fn npcrs_team_free(team: *mut Team) {
     }
 }
 
-/// Get the number of NPCs in a team.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_npc_count(team: *const Team) -> u32 {
     if team.is_null() {
@@ -81,7 +57,6 @@ pub extern "C" fn npcrs_team_npc_count(team: *const Team) -> u32 {
     unsafe { (*team).npcs.len() as u32 }
 }
 
-/// Get NPC names as a JSON array string.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_npc_names(team: *const Team) -> *mut c_char {
     if team.is_null() {
@@ -91,7 +66,6 @@ pub extern "C" fn npcrs_team_npc_names(team: *const Team) -> *mut c_char {
     to_c_string(&serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string()))
 }
 
-/// Get jinx names as a JSON array string.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_jinx_names(team: *const Team) -> *mut c_char {
     if team.is_null() {
@@ -101,7 +75,6 @@ pub extern "C" fn npcrs_team_jinx_names(team: *const Team) -> *mut c_char {
     to_c_string(&serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string()))
 }
 
-/// Get the team context string.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_team_context(team: *const Team) -> *mut c_char {
     if team.is_null() {
@@ -111,9 +84,6 @@ pub extern "C" fn npcrs_team_context(team: *const Team) -> *mut c_char {
     to_c_string(ctx.as_deref().unwrap_or(""))
 }
 
-// ─── NPC ───
-
-/// Load an NPC from a .npc file. Returns an opaque handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_npc_load(path: *const c_char) -> *mut Npc {
     let path = unsafe { from_c_str(path) };
@@ -126,7 +96,6 @@ pub extern "C" fn npcrs_npc_load(path: *const c_char) -> *mut Npc {
     }
 }
 
-/// Free an NPC handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_npc_free(npc: *mut Npc) {
     if !npc.is_null() {
@@ -136,7 +105,6 @@ pub extern "C" fn npcrs_npc_free(npc: *mut Npc) {
     }
 }
 
-/// Get NPC name.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_npc_name(npc: *const Npc) -> *mut c_char {
     if npc.is_null() {
@@ -145,7 +113,6 @@ pub extern "C" fn npcrs_npc_name(npc: *const Npc) -> *mut c_char {
     to_c_string(&unsafe { &*npc }.name)
 }
 
-/// Get NPC system prompt.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_npc_system_prompt(
     npc: *const Npc,
@@ -164,7 +131,6 @@ pub extern "C" fn npcrs_npc_system_prompt(
     to_c_string(&prompt)
 }
 
-/// Get NPC as JSON.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_npc_to_json(npc: *const Npc) -> *mut c_char {
     if npc.is_null() {
@@ -174,10 +140,6 @@ pub extern "C" fn npcrs_npc_to_json(npc: *const Npc) -> *mut c_char {
     to_c_string(&json)
 }
 
-// ─── Shell State (async, requires runtime) ───
-
-/// Create a new shell state. Returns an opaque handle.
-/// The caller must provide a team handle and a database path.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_shell_create(
     team: *mut Team,
@@ -221,7 +183,6 @@ pub extern "C" fn npcrs_shell_create(
     Box::into_raw(Box::new(state))
 }
 
-/// Free a shell state handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_shell_free(state: *mut ShellState) {
     if !state.is_null() {
@@ -231,11 +192,6 @@ pub extern "C" fn npcrs_shell_free(state: *mut ShellState) {
     }
 }
 
-/// Process a command asynchronously.
-/// Returns the output as a C string (must be freed with npcrs_free_string).
-///
-/// NOTE: This blocks on the tokio runtime. For Flutter, prefer calling
-/// through a Dart isolate to avoid blocking the UI thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_shell_process_command(
     state: *mut ShellState,
@@ -248,7 +204,6 @@ pub extern "C" fn npcrs_shell_process_command(
     let state = unsafe { &mut *state };
     let input = unsafe { from_c_str(input) };
 
-    // Add user message
     state.messages.push(crate::r#gen::Message::user(&input));
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -263,7 +218,6 @@ pub extern "C" fn npcrs_shell_process_command(
     )) {
         Ok(result) => {
             let output = result.response.as_deref().unwrap_or("");
-            // Update state messages
             state.messages = result.messages;
             to_c_string(output)
         }
@@ -271,8 +225,6 @@ pub extern "C" fn npcrs_shell_process_command(
     }
 }
 
-/// Set the model and provider for a shell state.
-/// For local GGUF: set model to the file path, provider to "llamacpp".
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_shell_set_model(
     state: *mut ShellState,
@@ -291,7 +243,6 @@ pub extern "C" fn npcrs_shell_set_model(
     }
 }
 
-/// Set an API key as an environment variable.
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_set_api_key(
     key_name: *const c_char,

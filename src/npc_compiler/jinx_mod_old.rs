@@ -1,16 +1,13 @@
-//! Jinx impl block — tool definition conversion.
 
 use crate::error::Result;
 use crate::r#gen::ToolDef;
 use crate::npc_compiler::{Jinx, JinxInput};
 
 impl Jinx {
-    /// Load a Jinx from a .jinx YAML file.
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
         super::jinx_loader::load_jinx_from_file(path)
     }
 
-    /// Convert this Jinx to an OpenAI-compatible tool definition for LLM tool calling.
     pub fn to_tool_def(&self) -> Option<ToolDef> {
         if self.name.is_empty() || self.description.is_empty() {
             return None;

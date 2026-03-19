@@ -1,10 +1,8 @@
-//! Memory lifecycle management: save, review, approve/reject.
 
 use crate::error::Result;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 
-/// Status of a memory in the review pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemoryStatus {
     Pending,
@@ -13,7 +11,6 @@ pub enum MemoryStatus {
 }
 
 impl MemoryStatus {
-    /// Convert to database string.
     pub fn as_str(&self) -> &'static str {
         match self {
             MemoryStatus::Pending => "pending",
@@ -22,7 +19,6 @@ impl MemoryStatus {
         }
     }
 
-    /// Parse from database string.
     pub fn from_str(s: &str) -> Self {
         match s {
             "approved" => MemoryStatus::Approved,
@@ -32,7 +28,6 @@ impl MemoryStatus {
     }
 }
 
-/// A memory record with full metadata.
 #[derive(Debug, Clone)]
 pub struct Memory {
     pub id: i64,
@@ -43,7 +38,6 @@ pub struct Memory {
     pub created_at: String,
 }
 
-/// Save a new pending memory.
 pub fn save_memory(conn: &Connection, npc_name: &str, content: &str) -> Result<i64> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
@@ -53,7 +47,6 @@ pub fn save_memory(conn: &Connection, npc_name: &str, content: &str) -> Result<i
     Ok(conn.last_insert_rowid())
 }
 
-/// Get all pending memories for review.
 pub fn get_pending_memories(conn: &Connection) -> Result<Vec<Memory>> {
     let mut stmt = conn.prepare(
         "SELECT id, npc_name, content, status, embedding, created_at
@@ -81,7 +74,6 @@ pub fn get_pending_memories(conn: &Connection) -> Result<Vec<Memory>> {
     Ok(memories)
 }
 
-/// Approve or reject a memory.
 pub fn update_memory_status(conn: &Connection, id: i64, status: MemoryStatus) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
@@ -91,7 +83,6 @@ pub fn update_memory_status(conn: &Connection, id: i64, status: MemoryStatus) ->
     Ok(())
 }
 
-/// Store an embedding for a memory.
 pub fn set_memory_embedding(conn: &Connection, id: i64, embedding: &[f64]) -> Result<()> {
     let blob = serde_json::to_vec(embedding)
         .map_err(|e| crate::error::NpcError::Other(format!("Failed to serialize embedding: {}", e)))?;
@@ -149,7 +140,6 @@ mod tests {
         update_memory_status(&conn, id1, MemoryStatus::Approved).unwrap();
         update_memory_status(&conn, id2, MemoryStatus::Rejected).unwrap();
 
-        // No pending memories left.
         let pending = get_pending_memories(&conn).unwrap();
         assert_eq!(pending.len(), 0);
     }
@@ -162,7 +152,6 @@ mod tests {
         let emb = vec![0.1, 0.2, 0.3, 0.4];
         set_memory_embedding(&conn, id, &emb).unwrap();
 
-        // Read back and verify.
         let blob: Vec<u8> = conn
             .query_row(
                 "SELECT embedding FROM npc_memories WHERE id = ?1",

@@ -1,13 +1,7 @@
-//! Job scheduling — mirrors npcpy.work.plan
-//!
-//! SQLite-backed storage plus platform-specific crontab/launchd scheduling
-//! and LLM-driven plan command.
 
 use crate::error::{NpcError, Result};
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
-
-// ── Helpers ──
 
 fn jobs_dir() -> String {
     shellexpand::tilde("~/.npcsh/jobs").to_string()
@@ -49,8 +43,6 @@ fn cron_tag(job_name: &str) -> String {
     format!("# npcsh:{}", job_name)
 }
 
-// ── Data model ──
-
 #[derive(Debug, Clone)]
 pub struct Job {
     pub name: String,
@@ -60,8 +52,6 @@ pub struct Job {
     pub next_run: Option<String>,
     pub status: String,
 }
-
-// ── SQLite-backed storage ──
 
 pub fn init_jobs_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -112,9 +102,6 @@ pub fn list_jobs_db(db_path: &str) -> Result<Vec<Job>> {
     Ok(jobs)
 }
 
-// ── OS-level scheduling ──
-
-/// Compile a command into a self-contained executable bash script.
 pub fn compile_job_script(command: &str, job_name: &str) -> Result<String> {
     let dir = jobs_dir();
     std::fs::create_dir_all(&dir).map_err(|e| NpcError::FileLoad {
@@ -141,7 +128,6 @@ pub fn compile_job_script(command: &str, job_name: &str) -> Result<String> {
     Ok(script_path)
 }
 
-/// Schedule a job using the OS scheduler.
 pub fn schedule_job_os(schedule: &str, command: &str, job_name: &str) -> (bool, String) {
     let log_dir = logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
@@ -158,7 +144,6 @@ pub fn schedule_job_os(schedule: &str, command: &str, job_name: &str) -> (bool, 
     }
 }
 
-/// Unschedule a job from the OS scheduler.
 pub fn unschedule_job_os(job_name: &str) -> (bool, String) {
     let os = std::env::consts::OS;
     match os {
@@ -167,7 +152,6 @@ pub fn unschedule_job_os(job_name: &str) -> (bool, String) {
     }
 }
 
-/// List all scheduled jobs from the OS scheduler.
 pub fn list_jobs() -> Vec<HashMap<String, serde_json::Value>> {
     let os = std::env::consts::OS;
     let mut jobs = Vec::new();
@@ -220,7 +204,6 @@ pub fn list_jobs() -> Vec<HashMap<String, serde_json::Value>> {
     jobs
 }
 
-/// Quick check whether a job is currently scheduled.
 pub fn job_is_active(job_name: &str) -> bool {
     let os = std::env::consts::OS;
     match os {
@@ -241,7 +224,6 @@ pub fn job_is_active(job_name: &str) -> bool {
     }
 }
 
-/// Detailed status dict for a job.
 pub fn job_status(job_name: &str) -> HashMap<String, serde_json::Value> {
     let log_path = format!("{}/{}.log", logs_dir(), job_name);
     let mut info = HashMap::new();
@@ -264,8 +246,6 @@ pub fn job_status(job_name: &str) -> HashMap<String, serde_json::Value> {
     info.insert("recent_log".into(), serde_json::Value::String(recent_log));
     info
 }
-
-// ── Platform-specific ──
 
 pub fn _schedule_crontab(
     script_path: &str,
@@ -419,8 +399,6 @@ pub fn _unschedule_launchd(job_name: &str) -> (bool, String) {
         (false, format!("Job \"{}\" not found.", job_name))
     }
 }
-
-// ── LLM-driven /plan command ──
 
 pub async fn execute_plan_command(
     command: &str,

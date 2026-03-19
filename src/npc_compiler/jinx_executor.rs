@@ -4,12 +4,6 @@ use std::collections::HashMap;
 use tera::{Context, Tera};
 use tokio::process::Command;
 
-/// Execute a Jinx with the given input values.
-///
-/// Runs each step in order, accumulating context.
-/// - `engine: bash` → runs via tokio subprocess
-/// - `engine: python` → delegates to Python with context injection
-/// - other engine → looks up and executes a sub-jinx
 pub async fn execute_jinx(
     jinx: &Jinx,
     input_values: &HashMap<String, String>,
@@ -18,7 +12,6 @@ pub async fn execute_jinx(
     let mut context: HashMap<String, serde_json::Value> = HashMap::new();
     let mut output = String::new();
 
-    // Seed context with input values (use defaults for missing)
     for input in &jinx.inputs {
         let value = input_values
             .get(&input.name)
@@ -31,10 +24,8 @@ pub async fn execute_jinx(
         );
     }
 
-    // Detect if this jinx needs an interactive terminal (TUI jinxes)
     let needs_tty = jinx_needs_tty(jinx);
 
-    // Execute steps in order
     for step in &jinx.steps {
         let result = if needs_tty {
             execute_step_interactive(step, &context, available_jinxes).await
@@ -73,8 +64,6 @@ pub async fn execute_jinx(
     })
 }
 
-/// Detect if a jinx needs an interactive terminal (TUI).
-/// Checks for common patterns: tty, termios, curses, input(), select.select
 fn jinx_needs_tty(jinx: &Jinx) -> bool {
     for step in &jinx.steps {
         let code = &step.code;
@@ -91,7 +80,6 @@ fn jinx_needs_tty(jinx: &Jinx) -> bool {
     false
 }
 
-/// Execute a single step (non-interactive).
 async fn execute_step(
     step: &JinxStep,
     context: &HashMap<String, serde_json::Value>,
@@ -99,8 +87,6 @@ async fn execute_step(
 ) -> Result<String> {
     match step.engine.as_str() {
         "python" => {
-            // Python code: render Jinja-style {{ var }} and {{ var | tojson }}
-            // with simple replacement — do NOT use Tera (it chokes on Python braces)
             let rendered = render_python_template(&step.code, context);
             execute_python(&rendered, context).await
         }
@@ -112,7 +98,6 @@ async fn execute_step(
     }
 }
 
-/// Execute a step that needs an interactive terminal (TUI jinxes).
 async fn execute_step_interactive(
     step: &JinxStep,
     context: &HashMap<String, serde_json::Value>,
@@ -131,17 +116,7 @@ async fn execute_step_interactive(
     }
 }
 
-/// Simple template rendering for Python code.
-///
-/// Uses regex to handle all Jinja2 expression patterns:
-///   {{ var }}
-///   {{ var | tojson }}
-///   {{ var | default("x") }}
-///   {{ var | default("x") | tojson }}
-///
-/// Does NOT use Tera (which conflicts with Python's {} braces).
 fn render_python_template(code: &str, context: &HashMap<String, serde_json::Value>) -> String {
-    // Use regex to find all {{ ... }} expressions
     let re = regex::Regex::new(r"\{\{(.*?)\}\}").unwrap();
 
     re.replace_all(code, |caps: &regex::Captures| {
@@ -151,27 +126,19 @@ fn render_python_template(code: &str, context: &HashMap<String, serde_json::Valu
     .to_string()
 }
 
-/// Resolve a single Jinja2 template expression like:
-///   "action | default(\"list\") | tojson"
-///   "bash_command | tojson"
-///   "query"
 fn resolve_template_expr(expr: &str, context: &HashMap<String, serde_json::Value>) -> String {
     let parts: Vec<&str> = expr.split('|').map(|s| s.trim()).collect();
     if parts.is_empty() {
         return String::new();
     }
 
-    // First part is the variable name
     let var_name = parts[0];
 
-    // Get the value from context
     let mut value = context.get(var_name).cloned();
 
-    // Process filters
     let mut use_tojson = false;
     for filter in &parts[1..] {
         if filter.starts_with("default(") {
-            // Extract default value: default("x") or default('x')
             if value.is_none() || value.as_ref().is_some_and(|v| v.as_str() == Some("")) {
                 let default_str = filter
                     .trim_start_matches("default(")
@@ -204,7 +171,6 @@ fn resolve_template_expr(expr: &str, context: &HashMap<String, serde_json::Value
     }
 }
 
-/// Execute a sub-jinx by engine name.
 async fn execute_sub_jinx(
     engine_name: &str,
     step: &JinxStep,
@@ -237,7 +203,6 @@ async fn execute_sub_jinx(
     }
 }
 
-/// Render a Tera template string with the given context.
 fn render_step_template(
     template: &str,
     context: &HashMap<String, serde_json::Value>,
@@ -253,22 +218,15 @@ fn render_step_template(
     Ok(tera.render("step", &ctx)?)
 }
 
-/// Build a Python wrapper that injects `context` dict and captures `context['output']`.
-///
-/// This bridges the gap between npcpy's Python runtime (where `context` is a dict
-/// injected by the Jinx executor) and our subprocess-based execution.
 fn wrap_python_with_context(code: &str, context: &HashMap<String, serde_json::Value>) -> String {
-    // Serialize context to JSON for injection
     let context_json = serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string());
 
-    // Build the wrapper manually to avoid format! issues with Python braces
     let indented_code = code
         .lines()
         .map(|l| format!("    {}", l))
         .collect::<Vec<_>>()
         .join("\n");
 
-    // Escape the context JSON for Python string literal
     let escaped_json = context_json
         .replace('\\', "\\\\")
         .replace('\'', "\\'");
@@ -299,7 +257,6 @@ fn wrap_python_with_context(code: &str, context: &HashMap<String, serde_json::Va
     wrapper
 }
 
-/// Execute a bash command and capture output.
 async fn execute_bash(code: &str) -> Result<String> {
     let output = Command::new("bash")
         .arg("-c")
@@ -330,7 +287,6 @@ async fn execute_bash(code: &str) -> Result<String> {
     }
 }
 
-/// Execute bash interactively (inherits terminal).
 async fn execute_bash_interactive(code: &str) -> Result<String> {
     let status = Command::new("bash")
         .arg("-c")
@@ -352,7 +308,6 @@ async fn execute_bash_interactive(code: &str) -> Result<String> {
     })
 }
 
-/// Execute Python code with context injection and output capture.
 async fn execute_python(code: &str, context: &HashMap<String, serde_json::Value>) -> Result<String> {
     let wrapped = wrap_python_with_context(code, context);
 
@@ -385,8 +340,6 @@ async fn execute_python(code: &str, context: &HashMap<String, serde_json::Value>
     }
 }
 
-/// Execute Python interactively (TUI jinxes that need terminal control).
-/// Inherits stdin/stdout/stderr so the TUI can take over.
 async fn execute_python_interactive(
     code: &str,
     context: &HashMap<String, serde_json::Value>,

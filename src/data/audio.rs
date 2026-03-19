@@ -1,4 +1,3 @@
-//! Audio utilities — mirrors npcpy.data.audio
 
 use crate::error::{NpcError, Result};
 use std::collections::HashMap;
@@ -13,10 +12,7 @@ pub async fn speech_to_text(audio_data: &[u8], engine: &str, language: Option<&s
     }
 }
 
-/// Local whisper STT — tries Groq API (free whisper endpoint) as a pure-Rust fallback.
-/// For true local inference, use the llamacpp feature with a whisper GGUF model.
 pub fn stt_whisper(audio_data: &[u8], _model_size: &str, language: Option<&str>) -> Result<HashMap<String, serde_json::Value>> {
-    // Use tokio runtime to call the async Groq/OpenAI API
     let rt = tokio::runtime::Handle::try_current()
         .or_else(|_| {
             tokio::runtime::Runtime::new().map(|rt| rt.handle().clone())
@@ -26,7 +22,6 @@ pub fn stt_whisper(audio_data: &[u8], _model_size: &str, language: Option<&str>)
     let data = audio_data.to_vec();
     let lang = language.map(String::from);
 
-    // Try Groq first (free whisper), then OpenAI
     rt.block_on(async {
         if std::env::var("GROQ_API_KEY").is_ok() {
             return stt_groq(&data, None, "whisper-large-v3", lang.as_deref()).await;

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// MCP client that connects to a server via stdio JSON-RPC.
 pub struct McpClient {
     child: Child,
     request_id: u64,
@@ -34,10 +33,8 @@ struct JsonRpcError {
 }
 
 impl McpClient {
-    /// Connect to an MCP server by spawning it as a child process.
     pub async fn connect(spec: &McpServerSpec) -> Result<Self> {
         let child = if let Some(ref command) = spec.command {
-            // Parse command string (e.g. "npx @something")
             let parts: Vec<&str> = command.split_whitespace().collect();
             let (cmd, args) = parts.split_first().ok_or_else(|| {
                 NpcError::Mcp("Empty command".to_string())
@@ -51,7 +48,6 @@ impl McpClient {
                 .spawn()
                 .map_err(|e| NpcError::Mcp(format!("Failed to spawn MCP server: {}", e)))?
         } else {
-            // Run path as a script
             let path = &spec.path;
             let (cmd, args): (&str, Vec<&str>) = if path.ends_with(".py") {
                 ("python3", vec![path.as_str()])
@@ -75,13 +71,11 @@ impl McpClient {
             request_id: 0,
         };
 
-        // Initialize the connection
         client.initialize().await?;
 
         Ok(client)
     }
 
-    /// Send the initialize handshake.
     async fn initialize(&mut self) -> Result<()> {
         let _resp = self
             .send_request(
@@ -97,14 +91,12 @@ impl McpClient {
             )
             .await?;
 
-        // Send initialized notification (no id = notification)
         self.send_notification("notifications/initialized", None)
             .await?;
 
         Ok(())
     }
 
-    /// List available tools from the server.
     pub async fn list_tools(&mut self) -> Result<Vec<McpTool>> {
         let resp = self
             .send_request("tools/list", None)
@@ -139,7 +131,6 @@ impl McpClient {
             .collect())
     }
 
-    /// Call a tool on the server.
     pub async fn call_tool(
         &mut self,
         name: &str,
@@ -155,7 +146,6 @@ impl McpClient {
             )
             .await?;
 
-        // Extract text content from response
         if let Some(content) = resp.get("content") {
             if let Some(arr) = content.as_array() {
                 let texts: Vec<&str> = arr
@@ -175,7 +165,6 @@ impl McpClient {
         Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
     }
 
-    /// Send a JSON-RPC request and read the response.
     async fn send_request(
         &mut self,
         method: &str,
@@ -207,7 +196,6 @@ impl McpClient {
             .await
             .map_err(|e| NpcError::Mcp(format!("Flush failed: {}", e)))?;
 
-        // Read response line
         let stdout = self
             .child
             .stdout
@@ -233,7 +221,6 @@ impl McpClient {
         Ok(resp.result.unwrap_or(serde_json::Value::Null))
     }
 
-    /// Send a JSON-RPC notification (no response expected).
     async fn send_notification(
         &mut self,
         method: &str,
@@ -267,7 +254,6 @@ impl McpClient {
 
 impl Drop for McpClient {
     fn drop(&mut self) {
-        // Kill the child process when the client is dropped
         let _ = self.child.start_kill();
     }
 }

@@ -1,24 +1,15 @@
-//! Memory search combining embedding similarity and knowledge graph lookups.
 
 use crate::error::Result;
 use crate::memory::embeddings::{cosine_similarity, get_embeddings};
 use rusqlite::params;
 
-/// A result from memory search.
 #[derive(Debug, Clone)]
 pub struct MemorySearchResult {
-    /// The memory content text.
     pub content: String,
-    /// Source of the result: `"embedding"` or `"kg"`.
     pub source: String,
-    /// Relevance score (cosine similarity for embeddings, keyword match score for KG).
     pub score: f64,
 }
 
-/// Search memories using embedding similarity.
-///
-/// Computes the embedding of `query`, then compares against all stored embeddings
-/// in the `npc_memories` table, returning the top-k most similar results.
 pub async fn search_similar_texts(
     query: &str,
     db_path: &str,
@@ -26,10 +17,8 @@ pub async fn search_similar_texts(
     provider: &str,
     top_k: usize,
 ) -> Result<Vec<MemorySearchResult>> {
-    // Get the query embedding.
     let query_embedding = get_embeddings(query, model, provider, None).await?;
 
-    // Open the database and read all approved memories that have embeddings.
     let conn = rusqlite::Connection::open(db_path)?;
 
     let mut stmt = conn.prepare(
@@ -44,7 +33,6 @@ pub async fn search_similar_texts(
         })?
         .filter_map(|r| r.ok())
         .filter_map(|(content, blob)| {
-            // Deserialize the embedding from the blob (stored as JSON).
             let embedding: Vec<f64> = serde_json::from_slice(&blob).ok()?;
             let score = cosine_similarity(&query_embedding, &embedding);
             Some(MemorySearchResult {
@@ -55,18 +43,13 @@ pub async fn search_similar_texts(
         })
         .collect();
 
-    // Sort by descending score.
     scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Return top-k.
     scored.truncate(top_k);
 
     Ok(scored)
 }
 
-/// Search memories by simple keyword matching in the npc_memories table.
-///
-/// Useful as a fallback when no embedding model is available.
 pub fn search_memories_by_keyword(
     query: &str,
     db_path: &str,
@@ -101,7 +84,6 @@ mod tests {
 
     #[test]
     fn test_keyword_search_empty_db() {
-        // Create a temp DB with the right schema.
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE npc_memories (
@@ -116,8 +98,6 @@ mod tests {
             );"
         ).unwrap();
 
-        // We can't use search_memories_by_keyword with in-memory DB directly,
-        // so just verify the schema is correct by inserting and querying.
         conn.execute(
             "INSERT INTO npc_memories (npc_name, content, status, created_at) VALUES (?1, ?2, ?3, ?4)",
             params!["test", "Rust is a systems language", "approved", "2025-01-01"],

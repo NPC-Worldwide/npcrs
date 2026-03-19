@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use walkdir::WalkDir;
 
-/// Load a single Jinx from a .jinx YAML file.
 pub fn load_jinx_from_file(path: impl AsRef<Path>) -> Result<Jinx> {
     let path = path.as_ref();
     let raw = std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad {
@@ -12,14 +11,12 @@ pub fn load_jinx_from_file(path: impl AsRef<Path>) -> Result<Jinx> {
         source: e,
     })?;
 
-    // Strip shebang if present (for executable .jinx files)
     let raw = if raw.starts_with("#!") {
         raw.splitn(2, '\n').nth(1).unwrap_or("").to_string()
     } else {
         raw
     };
 
-    // Strip Jinja2 template syntax that Tera won't understand
     let cleaned = strip_jinja2_specifics(&raw);
 
     let mut jinx: Jinx =
@@ -33,11 +30,6 @@ pub fn load_jinx_from_file(path: impl AsRef<Path>) -> Result<Jinx> {
     Ok(jinx)
 }
 
-/// Load all jinxes from a directory tree, returning name → Jinx map.
-///
-/// Walks the directory recursively, loading all .jinx files.
-/// The jinx name in the map is the `jinx_name` from the YAML,
-/// falling back to the filename stem.
 pub fn load_jinxes_from_directory(dir: impl AsRef<Path>) -> Result<HashMap<String, Jinx>> {
     let dir = dir.as_ref();
     let mut jinxes = HashMap::new();
@@ -75,13 +67,7 @@ pub fn load_jinxes_from_directory(dir: impl AsRef<Path>) -> Result<HashMap<Strin
     Ok(jinxes)
 }
 
-/// Strip Jinja2-specific syntax that doesn't translate to Tera.
-///
-/// Tera is Jinja2-compatible for most things, but some Python-specific
-/// constructs in the npcpy jinx files need preprocessing.
 fn strip_jinja2_specifics(raw: &str) -> String {
-    // For now, pass through. Tera handles most Jinja2 syntax.
-    // We'll add specific transformations as needed.
     raw.to_string()
 }
 

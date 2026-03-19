@@ -1,4 +1,3 @@
-//! Web search and URL fetching.
 
 use crate::error::{NpcError, Result};
 
@@ -9,7 +8,6 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
-/// Search the web — mirrors npcpy's search_web(). Dispatches to provider.
 pub async fn search_web(query: &str, num_results: usize, provider: &str, api_key: Option<&str>) -> Result<Vec<SearchResult>> {
     match provider {
         "brave" => search_brave(query, num_results, api_key).await,
@@ -24,7 +22,6 @@ pub async fn search_web(query: &str, num_results: usize, provider: &str, api_key
     }
 }
 
-/// DuckDuckGo search via HTML lite endpoint.
 pub async fn search_duckduckgo(query: &str, num_results: usize) -> Result<Vec<SearchResult>> {
     let client = reqwest::Client::new();
     let resp = client
@@ -66,7 +63,6 @@ pub async fn search_duckduckgo(query: &str, num_results: usize) -> Result<Vec<Se
     Ok(results)
 }
 
-/// Brave search via API.
 pub async fn search_brave(query: &str, num_results: usize, api_key: Option<&str>) -> Result<Vec<SearchResult>> {
     let key = api_key.map(String::from).or_else(|| std::env::var("BRAVE_API_KEY").ok())
         .ok_or_else(|| NpcError::LlmRequest("BRAVE_API_KEY not set".into()))?;
@@ -90,7 +86,6 @@ pub async fn search_brave(query: &str, num_results: usize, api_key: Option<&str>
     Ok(results)
 }
 
-/// SearxNG search via public instances.
 pub async fn search_searxng(query: &str, num_results: usize, instance_url: Option<&str>) -> Result<Vec<SearchResult>> {
     let instances = if let Some(url) = instance_url { vec![url.to_string()] }
     else if let Ok(url) = std::env::var("SEARXNG_URL") { vec![url] }
@@ -118,7 +113,6 @@ pub async fn search_searxng(query: &str, num_results: usize, instance_url: Optio
     Err(NpcError::LlmRequest("All SearxNG instances failed".into()))
 }
 
-/// Search Startpage via scraping.
 pub async fn search_startpage(query: &str, num_results: usize) -> Result<Vec<SearchResult>> {
     let client = reqwest::Client::new();
     let resp = client.post("https://www.startpage.com/sp/search").form(&[("query", query), ("cat", "web")]).header("User-Agent", "Mozilla/5.0").header("Accept", "text/html").send().await?;
@@ -130,7 +124,6 @@ pub async fn search_startpage(query: &str, num_results: usize) -> Result<Vec<Sea
     Ok(results)
 }
 
-/// Perplexity search via API. Returns (answer, citations).
 pub async fn search_perplexity(query: &str, api_key: Option<&str>, max_tokens: Option<u32>, temperature: Option<f64>, top_p: Option<f64>) -> Result<(String, Vec<String>)> {
     let key = api_key.map(String::from).or_else(|| std::env::var("PERPLEXITY_API_KEY").ok()).ok_or_else(|| NpcError::LlmRequest("PERPLEXITY_API_KEY not set".into()))?;
     let body = serde_json::json!({"model": "sonar", "messages": [{"role": "system", "content": "Be precise and concise."}, {"role": "user", "content": query}], "max_tokens": max_tokens.unwrap_or(400), "temperature": temperature.unwrap_or(0.2), "top_p": top_p.unwrap_or(0.9), "stream": false});
@@ -143,7 +136,6 @@ pub async fn search_perplexity(query: &str, api_key: Option<&str>, max_tokens: O
     Ok((answer, citations))
 }
 
-/// Exa search via API.
 pub async fn search_exa(query: &str, api_key: Option<&str>, top_k: usize) -> Result<Vec<SearchResult>> {
     let key = api_key.map(String::from).or_else(|| std::env::var("EXA_API_KEY").ok()).ok_or_else(|| NpcError::LlmRequest("EXA_API_KEY not set".into()))?;
     let body = serde_json::json!({"query": query, "contents": {"text": true}, "numResults": top_k});
@@ -156,7 +148,6 @@ pub async fn search_exa(query: &str, api_key: Option<&str>, top_k: usize) -> Res
     Ok(results)
 }
 
-/// Fetch a URL and return text content.
 pub async fn fetch_url(url: &str) -> Result<String> {
     let client = reqwest::Client::new();
     let resp = client

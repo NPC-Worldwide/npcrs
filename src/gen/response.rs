@@ -1,8 +1,3 @@
-//! LLM client powered by the `genai` crate (v0.5).
-//!
-//! Uses a global singleton genai::Client (via OnceLock) so callers just invoke
-//! `get_llm_response(...)` directly — no client object to pass around.
-//! This mirrors npcpy's `get_llm_response()` pattern.
 
 use crate::error::{NpcError, Result};
 use crate::r#gen::response_types::*;
@@ -16,18 +11,12 @@ use genai::Client as GenaiClient;
 
 use std::sync::OnceLock;
 
-/// Global genai client — initialized once, reused everywhere.
 static GENAI_CLIENT: OnceLock<GenaiClient> = OnceLock::new();
 
-/// Get (or lazily create) the global genai client.
 fn get_client() -> &'static GenaiClient {
     GENAI_CLIENT.get_or_init(GenaiClient::default)
 }
 
-/// Send a chat completion request using the global genai client.
-///
-/// `provider` is ignored — genai infers the provider from the model name.
-/// `api_url_override` is currently unused (genai manages endpoints).
 pub async fn get_genai_response(
     _provider: &str,
     model: &str,
@@ -37,7 +26,6 @@ pub async fn get_genai_response(
 ) -> Result<LlmResponse> {
     let client = get_client();
 
-    // Build genai ChatRequest from our Message types
     let mut req = ChatRequest::new(Vec::new());
 
     for msg in messages {
@@ -52,7 +40,6 @@ pub async fn get_genai_response(
             }
             "assistant" => {
                 if let Some(ref tcs) = msg.tool_calls {
-                    // Assistant message with tool calls
                     let genai_tcs: Vec<GenaiToolCall> = tcs
                         .iter()
                         .map(|tc| GenaiToolCall {
@@ -81,7 +68,6 @@ pub async fn get_genai_response(
         }
     }
 
-    // Add tools if present
     if let Some(tool_defs) = tools {
         let genai_tools: Vec<GenaiTool> = tool_defs
             .iter()
@@ -97,24 +83,20 @@ pub async fn get_genai_response(
         req = req.with_tools(genai_tools);
     }
 
-    // Execute via genai
     let genai_resp = client
         .exec_chat(model, req, None)
         .await
         .map_err(|e| NpcError::LlmRequest(format!("{}", e)))?;
 
-    // Convert genai response back to our types
     convert_genai_response(genai_resp, model)
 }
 
-/// Convert a genai ChatResponse into our internal LlmResponse.
 fn convert_genai_response(resp: GenaiChatResponse, model: &str) -> Result<LlmResponse> {
     let mut content_text: Option<String> = None;
     let mut tool_calls: Option<Vec<ToolCall>> = None;
 
     let genai_content = &resp.content;
 
-    // Check for tool calls
     let tcs = genai_content.tool_calls();
     if !tcs.is_empty() {
         tool_calls = Some(
@@ -132,7 +114,6 @@ fn convert_genai_response(resp: GenaiChatResponse, model: &str) -> Result<LlmRes
         );
     }
 
-    // Check for text content
     let text: Option<String> = genai_content.joined_texts();
     if let Some(ref t) = text {
         if !t.is_empty() {

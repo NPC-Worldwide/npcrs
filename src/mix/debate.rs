@@ -1,43 +1,20 @@
-//! Multi-agent debate — NPCs argue in rounds, producing a structured result.
-//!
-//! Mirrors `npcpy.mix.debate`.
 
 use crate::error::Result;
 use crate::r#gen::Message;
 use crate::npc_compiler::Npc;
 
-/// A single round of a debate — one NPC's argument.
 #[derive(Debug, Clone)]
 pub struct DebateRound {
-    /// Which NPC spoke in this round.
     pub npc_name: String,
-    /// The argument they made.
     pub argument: String,
 }
 
-/// The full result of a multi-agent debate.
 #[derive(Debug, Clone)]
 pub struct DebateResult {
-    /// All rounds of the debate, in order.
     pub rounds: Vec<DebateRound>,
-    /// A synthesized summary of the debate.
     pub summary: String,
 }
 
-/// Run a multi-agent debate on a topic.
-///
-/// Each NPC takes turns arguing about the topic. Each NPC sees the full
-/// conversation history from previous rounds, so they can respond to
-/// each other's arguments.
-///
-/// # Arguments
-/// * `client` — The LLM client.
-/// * `npcs` — The NPCs participating in the debate.
-/// * `topic` — The topic/question to debate.
-/// * `rounds` — Number of full rounds (each NPC speaks once per round).
-///
-/// # Returns
-/// A `DebateResult` with all rounds and a synthesized summary.
 pub async fn debate(
     
     npcs: &[&Npc],
@@ -56,7 +33,6 @@ pub async fn debate(
 
     for round_num in 0..rounds {
         for npc in npcs {
-            // Build the prompt with debate context
             let prompt = if conversation_history.is_empty() {
                 format!(
                     "You are participating in a debate about: {topic}\n\n\
@@ -101,7 +77,6 @@ pub async fn debate(
 
             let argument = response.message.content.unwrap_or_default();
 
-            // Update conversation history
             conversation_history.push_str(&format!(
                 "\n[{name} - Round {round}]: {arg}\n",
                 name = npc.name,
@@ -116,7 +91,6 @@ pub async fn debate(
         }
     }
 
-    // Generate a summary using the first NPC's model
     let summary = generate_summary(npcs[0], topic, &conversation_history).await?;
 
     Ok(DebateResult {
@@ -125,7 +99,6 @@ pub async fn debate(
     })
 }
 
-/// Generate a summary of the debate using an NPC's model.
 async fn generate_summary(
     
     summarizer: &Npc,

@@ -1,22 +1,15 @@
-//! Tera-based template engine for Jinx rendering.
-//!
-//! Tera is a Jinja2-compatible template engine for Rust.
-//! This module wraps Tera with NPC-specific functions and filters.
 
 use tera::{Context, Tera};
 use std::collections::HashMap;
 
-/// Create a Tera instance with NPC-specific functions registered.
 pub fn create_engine() -> Tera {
     let mut tera = Tera::default();
 
-    // Register custom filters
     tera.register_filter("tojson", tojson_filter);
 
     tera
 }
 
-/// Render a template string with the given context variables.
 pub fn render(
     template: &str,
     context: &HashMap<String, serde_json::Value>,
@@ -32,7 +25,6 @@ pub fn render(
     tera.render("__inline__", &ctx)
 }
 
-/// Custom `tojson` filter — serializes a value to JSON string.
 fn tojson_filter(
     value: &tera::Value,
     _args: &HashMap<String, tera::Value>,

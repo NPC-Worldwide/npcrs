@@ -1,20 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-/// A chat message in the conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: Option<String>,
 
-    /// Tool calls requested by the assistant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
 
-    /// Tool call ID (for tool response messages).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 
-    /// Name (for tool response messages).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
@@ -61,7 +57,6 @@ impl Message {
     }
 }
 
-/// A tool call requested by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
@@ -69,21 +64,18 @@ pub struct ToolCall {
     pub function: ToolCallFunction,
 }
 
-/// Function details within a tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallFunction {
     pub name: String,
     pub arguments: String,
 }
 
-/// OpenAI-compatible tool definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDef {
     pub r#type: String,
     pub function: FunctionDef,
 }
 
-/// Function definition within a tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionDef {
     pub name: String,
@@ -92,22 +84,15 @@ pub struct FunctionDef {
     pub parameters: serde_json::Value,
 }
 
-/// Response from an LLM completion.
 #[derive(Debug, Clone)]
 pub struct LlmResponse {
-    /// The assistant's message.
     pub message: Message,
-    /// Token usage stats.
     pub usage: Option<Usage>,
-    /// Model that was used.
     pub model: String,
-    /// Whether the response was cut off.
     pub finish_reason: Option<String>,
-    /// Estimated cost in USD (populated by gen::get_response or manually).
     pub cost_usd: Option<f64>,
 }
 
-/// Token usage statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: u64,
@@ -115,18 +100,13 @@ pub struct Usage {
     pub total_tokens: u64,
 }
 
-/// Streaming chunk from an LLM.
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
-    /// Partial content delta.
     pub delta: Option<String>,
-    /// Partial tool call deltas.
     pub tool_call_deltas: Option<Vec<ToolCallDelta>>,
-    /// Set when streaming is done.
     pub finish_reason: Option<String>,
 }
 
-/// Partial tool call in a streaming response.
 #[derive(Debug, Clone)]
 pub struct ToolCallDelta {
     pub index: usize,
@@ -135,7 +115,6 @@ pub struct ToolCallDelta {
     pub arguments_delta: Option<String>,
 }
 
-/// Configuration for a provider.
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
     pub base_url: String,

@@ -1,4 +1,3 @@
-//! Image utilities — mirrors npcpy.data.image
 
 use crate::error::{NpcError, Result};
 use std::collections::HashMap;

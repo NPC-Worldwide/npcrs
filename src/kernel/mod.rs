@@ -1,11 +1,3 @@
-//! Kernel — boot, process table, and syscall dispatch.
-//!
-//! The kernel is the central coordinator. It:
-//! 1. Boots from a team directory (like an OS booting from disk)
-//! 2. Manages the process table (NPC processes)
-//! 3. Dispatches syscalls (jinx invocations) with capability checks
-//! 4. Manages drivers (LLM providers, MCP servers)
-//! 5. Coordinates IPC between processes
 
 mod boot;
 mod syscall;
@@ -27,46 +19,33 @@ use crate::vfs::Vfs;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// The NPC OS Kernel.
 pub struct Kernel {
-    /// Process table: pid → process.
     processes: HashMap<Pid, Process>,
 
-    /// Next PID to assign.
     next_pid: AtomicU32,
 
-    /// Loaded team (boot image).
     pub team: Team,
 
-    /// All available jinxes (syscall table).
     pub jinxes: HashMap<String, Jinx>,
 
-    /// LLM driver manager.
     pub drivers: DriverManager,
 
-    /// Virtual filesystem.
     pub vfs: Vfs,
 
-    /// IPC bus.
     pub ipc: IpcBus,
 
-    /// Process scheduler.
     pub scheduler: Scheduler,
 
-    /// Conversation history database.
     pub history: CommandHistory,
 
-    /// Kernel uptime.
     pub boot_time: chrono::DateTime<chrono::Utc>,
 }
 
 impl Kernel {
-    /// Boot the kernel from a team directory.
     pub fn boot(team_dir: &str, db_path: &str) -> Result<Self> {
         boot::boot_kernel(team_dir, db_path)
     }
 
-    /// Spawn a new process from an NPC.
     pub fn spawn(&mut self, npc: Npc, ppid: Pid, capabilities: Capabilities) -> Pid {
         let pid = self.next_pid.fetch_add(1, Ordering::Relaxed);
         let mut process = Process::spawn(pid, ppid, npc, capabilities);
@@ -83,7 +62,6 @@ impl Kernel {
         pid
     }
 
-    /// Spawn the init process (forenpc, pid 0).
     pub fn spawn_init(&mut self, npc: Npc) -> Pid {
         let pid = 0;
         self.next_pid.store(1, Ordering::Relaxed);
@@ -93,22 +71,18 @@ impl Kernel {
         pid
     }
 
-    /// Get a process by PID.
     pub fn get_process(&self, pid: Pid) -> Option<&Process> {
         self.processes.get(&pid)
     }
 
-    /// Get a mutable process by PID.
     pub fn get_process_mut(&mut self, pid: Pid) -> Option<&mut Process> {
         self.processes.get_mut(&pid)
     }
 
-    /// Find a process by NPC name.
     pub fn find_by_name(&self, name: &str) -> Option<&Process> {
         self.processes.values().find(|p| p.npc.name == name)
     }
 
-    /// Kill a process.
     pub fn kill(&mut self, pid: Pid, exit_code: i32) -> Result<()> {
         let process = self.processes.get_mut(&pid).ok_or_else(|| {
             NpcError::Other(format!("No process with pid {}", pid))
@@ -118,7 +92,6 @@ impl Kernel {
         Ok(())
     }
 
-    /// List all living processes.
     pub fn ps(&self) -> Vec<&Process> {
         self.processes
             .values()
@@ -126,12 +99,10 @@ impl Kernel {
             .collect()
     }
 
-    /// List all jinx names.
     pub fn jinx_names(&self) -> Vec<&str> {
         self.jinxes.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Chat-only exec — sends to LLM without any tools.
     pub async fn exec_chat(
         &mut self,
         pid: Pid,
@@ -146,7 +117,6 @@ impl Kernel {
 
         let system = process.npc.system_prompt(self.team.context.as_deref());
 
-        // Build messages without tool messages (like Python chat mode)
         let mut messages = vec![Message::system(system)];
         for m in &process.messages {
             if m.role != "tool" && m.tool_calls.is_none() {
@@ -176,7 +146,6 @@ impl Kernel {
         Ok(output)
     }
 
-    /// Execute a syscall (jinx invocation) on behalf of a process.
     pub async fn syscall(
         &mut self,
         pid: Pid,
@@ -186,14 +155,6 @@ impl Kernel {
         syscall::execute_syscall(self, pid, jinx_name, args).await
     }
 
-    /// Execute the agent loop — mirrors Python's process_pipeline_command.
-    ///
-    /// Flow (matching npcpy exactly):
-    /// 1. Sanitize messages before each iteration
-    /// 2. First iteration sends user input, subsequent send "Continue. Call stop when done."
-    /// 3. Execute tool calls, print results, append to messages
-    /// 4. Loop until no tool calls or max iterations (50)
-    /// 5. Accumulate usage across iterations
     pub async fn exec(
         &mut self,
         pid: Pid,
@@ -202,7 +163,6 @@ impl Kernel {
         use crate::r#gen::sanitize::sanitize_messages;
         use crate::r#gen::cost::calculate_cost;
 
-        // Extract what we need from the process, then drop the borrow
         let (model, provider, system, api_url, npc_name, mut tool_defs, executors) = {
             let process = self.processes.get_mut(&pid).ok_or_else(|| {
                 NpcError::Other(format!("No process with pid {}", pid))
@@ -234,14 +194,12 @@ impl Kernel {
 
         let tools = if tool_defs.is_empty() { None } else { Some(tool_defs.as_slice()) };
 
-        // Add context info like Python does
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".to_string());
         let platform_info = format!("Platform: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
         let context_info = format!("The current working directory is: {}\n{}", cwd, platform_info);
 
-        // Tool guidance (matches Python's tool prompt injection)
         let tool_guidance = if tools.is_some() {
             let tool_names: Vec<&str> = tool_defs.iter().map(|t| t.function.name.as_str()).collect();
             format!(
@@ -257,7 +215,6 @@ impl Kernel {
             String::new()
         };
 
-        // Agent loop — mirrors Python's while iteration < max_iterations
         let max_iterations = 50;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
@@ -270,20 +227,17 @@ impl Kernel {
                 break;
             }
 
-            // Sanitize messages before EACH iteration (matches Python)
             {
                 let process = self.processes.get_mut(&pid).unwrap();
                 process.messages = sanitize_messages(std::mem::take(&mut process.messages));
             }
 
-            // Build message list fresh each iteration
             let mut messages = vec![Message::system(&system)];
             {
                 let process = self.processes.get(&pid).unwrap();
                 messages.extend(process.messages.clone());
             }
 
-            // First iteration: user input + context. Subsequent: "Continue."
             let iter_prompt = if iteration == 0 {
                 format!("{}\n{}{}", input, context_info, tool_guidance)
             } else {
@@ -297,13 +251,11 @@ impl Kernel {
                 messages.len(),
             );
 
-            // LLM call
             let response = crate::r#gen::get_genai_response(
                     &provider, &model, &messages, tools, api_url.as_deref(),
                 )
                 .await?;
 
-            // Accumulate usage
             if let Some(ref usage) = response.usage {
                 total_input_tokens += usage.prompt_tokens;
                 total_output_tokens += usage.completion_tokens;
@@ -312,32 +264,26 @@ impl Kernel {
                 process.record_usage(usage.prompt_tokens, usage.completion_tokens, cost);
             }
 
-            // Add user message to process history (only on first iteration)
             if iteration == 0 {
                 let process = self.processes.get_mut(&pid).unwrap();
                 process.messages.push(Message::user(input));
             }
 
-            // Check for tool calls
             if let Some(ref tool_calls) = response.message.tool_calls {
                 tool_calls_count += 1;
 
-                // Add assistant message with tool_calls to history
                 {
                     let process = self.processes.get_mut(&pid).unwrap();
                     process.messages.push(response.message.clone());
                 }
 
-                // Log tool names
                 let called: Vec<&str> = tool_calls.iter().map(|tc| tc.function.name.as_str()).collect();
                 eprintln!("\x1b[90m  [iter {}] tools: {}\x1b[0m", iteration + 1, called.join(", "));
 
-                // Collect tool call info to avoid borrow conflict
                 let tc_info: Vec<(String, String, String)> = tool_calls.iter()
                     .map(|tc| (tc.id.clone(), tc.function.name.clone(), tc.function.arguments.clone()))
                     .collect();
 
-                // Check capabilities
                 let can_run: Vec<bool> = {
                     let process = self.processes.get(&pid).unwrap();
                     tc_info.iter()
@@ -345,7 +291,6 @@ impl Kernel {
                         .collect()
                 };
 
-                // Execute each tool call
                 for (i, (tc_id, tc_name, tc_args_str)) in tc_info.iter().enumerate() {
                     if !can_run[i] {
                         let process = self.processes.get_mut(&pid).unwrap();
@@ -366,7 +311,6 @@ impl Kernel {
 
                     let tool_result = self.execute_tool(tc_name, &args, &executors).await;
 
-                    // Print tool result immediately (like Python does)
                     eprintln!("\x1b[36m\n⚡ {}:\x1b[0m", tc_name);
                     let preview = if tool_result.len() > 500 {
                         format!("{}...\n[{} chars total]", &tool_result[..500], tool_result.len())
@@ -390,7 +334,6 @@ impl Kernel {
                     process.messages.push(Message::tool_result(tc_id, &tool_result));
                 }
             } else {
-                // No tool calls — final response
                 final_output = response.message.content.clone().unwrap_or_default();
                 let process = self.processes.get_mut(&pid).unwrap();
                 process.messages.push(response.message);
@@ -409,7 +352,6 @@ impl Kernel {
         Ok(final_output)
     }
 
-    /// Execute a single tool by name — matches Python's tool_exec_map dispatch.
     async fn execute_tool(
         &self,
         name: &str,
@@ -494,7 +436,6 @@ impl Kernel {
             "delegate" | "convene" => {
                 let target = args.get("npc_name").or_else(|| args.get("target")).cloned().unwrap_or_default();
                 let msg = args.get("message").or_else(|| args.get("query")).cloned().unwrap_or_default();
-                // Delegate via llm_funcs::get_llm_response on the target NPC
                 if let Some(target_npc) = self.team.get_npc(&target).cloned() {
                     match crate::llm_funcs::get_llm_response(
                         &msg, Some(&target_npc), None, None, None, &[], self.team.context.as_deref(),
@@ -506,7 +447,6 @@ impl Kernel {
                     format!("NPC '{}' not found in team. Available: {:?}", target, self.team.npc_names())
                 }
             }
-            // Fallback: jinx engine
             _ => {
                 match executors.get(name) {
                     Some(crate::npc_compiler::ToolExecutor::Jinx(jname)) => {
@@ -523,7 +463,6 @@ impl Kernel {
         }
     }
 
-    /// Fork a process — create a child with the same NPC but fresh state.
     pub fn fork(&mut self, parent_pid: Pid) -> Result<Pid> {
         let parent = self.processes.get(&parent_pid).ok_or_else(|| {
             NpcError::Other(format!("No process with pid {}", parent_pid))
@@ -540,22 +479,18 @@ impl Kernel {
         let child_caps = if parent.capabilities.is_superuser {
             Capabilities::root()
         } else {
-            // Children get same or fewer capabilities
             parent.capabilities.clone()
         };
 
         Ok(self.spawn(child_npc, parent_pid, child_caps))
     }
 
-    /// Delegate: parent process sends work to a named NPC process.
-    /// If no process exists for that NPC, spawns one.
     pub async fn delegate(
         &mut self,
         from_pid: Pid,
         target_npc_name: &str,
         input: &str,
     ) -> Result<String> {
-        // Check delegation capability
         {
             let from = self.processes.get(&from_pid).ok_or_else(|| {
                 NpcError::Other(format!("No process with pid {}", from_pid))
@@ -568,11 +503,9 @@ impl Kernel {
             }
         }
 
-        // Find or spawn target process
         let target_pid = if let Some(p) = self.find_by_name(target_npc_name) {
             p.pid
         } else {
-            // Spawn from team NPCs
             let npc = self
                 .team
                 .get_npc(target_npc_name)
@@ -586,7 +519,6 @@ impl Kernel {
         self.exec(target_pid, input).await
     }
 
-    /// Get kernel stats.
     pub fn stats(&self) -> KernelStats {
         let processes = &self.processes;
         let running = processes
@@ -622,7 +554,6 @@ impl Kernel {
     }
 }
 
-/// Kernel status summary.
 #[derive(Debug, Clone, Serialize)]
 pub struct KernelStats {
     pub uptime_secs: u64,

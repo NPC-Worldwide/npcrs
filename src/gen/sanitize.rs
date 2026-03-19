@@ -1,22 +1,11 @@
-//! 3-pass message sanitizer ported from npcpy's gen/response.py.
-//!
-//! Pass 1: Fix orphaned tool_use / tool_result pairs.
-//! Pass 2: Merge consecutive same-role messages.
-//! Pass 3: Strip trailing assistant messages.
 
 use crate::r#gen::Message;
 
-/// Sanitize messages before sending to an LLM provider.
-///
-/// Ensures all tool_use blocks have matching tool_results,
-/// merges consecutive same-role messages, and strips trailing
-/// assistant messages (Anthropic rejects them).
 pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
     if messages.is_empty() {
         return messages;
     }
 
-    // ── Pass 1: Fix orphaned tool_use / tool_result ──
     let mut cleaned: Vec<Message> = Vec::with_capacity(messages.len());
     let mut i = 0;
     while i < messages.len() {
@@ -29,7 +18,6 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
                 .map(|tc| tc.id.as_str())
                 .collect();
 
-            // Collect tool results immediately following
             let mut fulfilled_ids = std::collections::HashSet::new();
             let mut j = i + 1;
             while j < messages.len() && messages[j].role == "tool" {
@@ -40,23 +28,19 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
             }
 
             if !expected_ids.is_empty() && expected_ids.is_subset(&fulfilled_ids) {
-                // Valid pair — keep assistant and all tool results
                 cleaned.push(messages[i].clone());
                 for k in (i + 1)..j {
                     cleaned.push(messages[k].clone());
                 }
             } else {
-                // Orphaned — strip tool_calls, keep text content
                 if let Some(ref text) = msg.content {
                     if !text.is_empty() {
                         cleaned.push(Message::assistant(text));
                     }
                 }
-                // Skip partial tool results
             }
             i = j;
         } else if msg.role == "tool" {
-            // Stray tool result not preceded by assistant with tool_calls
             let content = msg.content.as_deref().unwrap_or("");
             let name = msg.name.as_deref().unwrap_or("tool");
             if name != "tool" {
@@ -71,7 +55,6 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
         }
     }
 
-    // ── Pass 2: Merge consecutive same-role (user/assistant only, no tool_calls) ──
     let mut merged: Vec<Message> = Vec::with_capacity(cleaned.len());
     for msg in cleaned {
         let dominated = !merged.is_empty()
@@ -91,7 +74,6 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
         }
     }
 
-    // ── Pass 3: Strip trailing assistant messages (Anthropic rejects them) ──
     while merged
         .last()
         .map_or(false, |m| m.role == "assistant" && m.tool_calls.is_none())
@@ -115,7 +97,6 @@ mod tests {
             Message::user("Hello"),
         ];
         let clean = sanitize_messages(msgs);
-        // Empty user merges with next user
         assert_eq!(clean.len(), 2);
         assert_eq!(clean[1].content.as_deref(), Some("Hello"));
     }
@@ -141,7 +122,6 @@ mod tests {
             Message::assistant("hello"),
         ];
         let clean = sanitize_messages(msgs);
-        // Trailing assistant should be stripped
         assert_eq!(clean.len(), 2);
         assert_eq!(clean[1].role, "user");
     }
@@ -165,11 +145,8 @@ mod tests {
                 tool_call_id: None,
                 name: None,
             },
-            // No tool result follows — orphaned
         ];
         let clean = sanitize_messages(msgs);
-        // Should keep "Let me check." as plain assistant, then strip it (trailing)
-        // So we end up with system + user
         assert_eq!(clean.len(), 2);
     }
 

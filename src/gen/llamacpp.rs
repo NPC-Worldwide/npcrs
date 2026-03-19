@@ -1,4 +1,3 @@
-//! Local GGUF inference via llama.cpp — mirrors npcpy's get_llamacpp_response().
 
 use crate::error::{NpcError, Result};
 use crate::r#gen::response_types::*;
@@ -17,7 +16,6 @@ fn get_backend() -> &'static LlamaBackend {
     BACKEND.get_or_init(|| LlamaBackend::init().expect("Failed to init llama backend"))
 }
 
-/// Load a GGUF model and run chat completion — mirrors npcpy's get_llamacpp_response().
 pub fn get_llamacpp_response(
     model_path: &str,
     messages: &[Message],
@@ -40,16 +38,13 @@ pub fn get_llamacpp_response(
     let mut ctx = model.new_context(backend, ctx_params)
         .map_err(|e| NpcError::LlmRequest(format!("Context error: {:?}", e)))?;
 
-    // Build prompt from messages (ChatML format)
     let prompt = format_chatml(messages);
 
-    // Tokenize
     let tokens = model.str_to_token(&prompt, llama_cpp_2::model::AddBos::Always)
         .map_err(|e| NpcError::LlmRequest(format!("Tokenize error: {:?}", e)))?;
 
     let prompt_tokens = tokens.len() as u64;
 
-    // Create batch and decode prompt
     let mut batch = LlamaBatch::new(n_ctx as usize, 1);
     for (i, &token) in tokens.iter().enumerate() {
         let is_last = i == tokens.len() - 1;
@@ -60,13 +55,11 @@ pub fn get_llamacpp_response(
     ctx.decode(&mut batch)
         .map_err(|e| NpcError::LlmRequest(format!("Decode error: {:?}", e)))?;
 
-    // Set up sampler with temperature
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::temp(temperature),
         LlamaSampler::dist(42),
     ]);
 
-    // Generate tokens
     let mut output_tokens = Vec::new();
     let mut n_cur = tokens.len() as i32;
 
@@ -88,7 +81,6 @@ pub fn get_llamacpp_response(
             .map_err(|e| NpcError::LlmRequest(format!("Decode error: {:?}", e)))?;
     }
 
-    // Detokenize
     let output_text: String = output_tokens.iter()
         .filter_map(|t| model.token_to_str(*t, llama_cpp_2::model::Special::Tokenize).ok())
         .collect();

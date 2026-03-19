@@ -1,4 +1,3 @@
-//! Data loading — web search, file loading, text processing, images, audio, video.
 
 pub mod web;
 pub mod load;

@@ -4,44 +4,37 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-/// A registered tool handler -- takes JSON args, returns result string.
 pub type ToolHandler = Box<
     dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<String>> + Send>>
         + Send
         + Sync,
 >;
 
-/// Registry of tools available for LLM calling.
 pub struct ToolRegistry {
     tools: HashMap<String, RegisteredTool>,
 }
 
-/// A tool with its definition and handler.
 pub struct RegisteredTool {
     pub def: ToolDef,
     pub handler: ToolHandler,
 }
 
 impl ToolRegistry {
-    /// Create an empty registry.
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
         }
     }
 
-    /// Register a tool.
     pub fn register(&mut self, tool: RegisteredTool) {
         let name = tool.def.function.name.clone();
         self.tools.insert(name, tool);
     }
 
-    /// Get all tool definitions for sending to the LLM.
     pub fn tool_defs(&self) -> Vec<ToolDef> {
         self.tools.values().map(|t| t.def.clone()).collect()
     }
 
-    /// Execute a tool call by name with the given JSON arguments.
     pub async fn execute(&self, name: &str, args: serde_json::Value) -> Result<String> {
         let tool = self.tools.get(name).ok_or_else(|| NpcError::ToolNotFound {
             name: name.to_string(),
@@ -49,7 +42,6 @@ impl ToolRegistry {
         (tool.handler)(args).await
     }
 
-    /// Process a list of tool calls from an LLM response, returning tool result messages.
     pub async fn process_tool_calls(&self, tool_calls: &[ToolCall]) -> Vec<Message> {
         let mut results = Vec::with_capacity(tool_calls.len());
 
@@ -68,17 +60,14 @@ impl ToolRegistry {
         results
     }
 
-    /// Check if a tool is registered.
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }
 
-    /// Number of registered tools.
     pub fn len(&self) -> usize {
         self.tools.len()
     }
 
-    /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
@@ -90,7 +79,6 @@ impl Default for ToolRegistry {
     }
 }
 
-/// Builder for creating tools without runtime introspection.
 pub struct ToolBuilder {
     name: String,
     description: String,
@@ -99,7 +87,6 @@ pub struct ToolBuilder {
 }
 
 impl ToolBuilder {
-    /// Start building a new tool with the given name.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -112,13 +99,11 @@ impl ToolBuilder {
         }
     }
 
-    /// Set the tool description.
     pub fn description(mut self, desc: impl Into<String>) -> Self {
         self.description = desc.into();
         self
     }
 
-    /// Add a parameter to the tool.
     pub fn param(
         mut self,
         name: &str,
@@ -138,9 +123,7 @@ impl ToolBuilder {
         self
     }
 
-    /// Finish building and attach a handler.
     pub fn build(mut self, handler: ToolHandler) -> RegisteredTool {
-        // Set the required array on the parameters object.
         if !self.required.is_empty() {
             self.parameters["required"] = serde_json::json!(self.required);
         }
@@ -163,19 +146,12 @@ impl ToolBuilder {
     }
 }
 
-/// Flatten tool_calls and tool-result messages into plain text for models
-/// that don't support tool calling. Mirrors npcpy's tools.py:flatten_tool_messages.
-///
-/// - Assistant messages with tool_calls are converted to text describing the calls.
-/// - Tool result messages are converted to user messages with the result content.
-/// - All other messages pass through unchanged.
 pub fn flatten_tool_messages(messages: &[Message]) -> Vec<Message> {
     let mut out = Vec::with_capacity(messages.len());
 
     for msg in messages {
         if msg.role == "assistant" {
             if let Some(ref tool_calls) = msg.tool_calls {
-                // Build a text representation of what the assistant wanted to do.
                 let mut parts = Vec::new();
                 if let Some(ref content) = msg.content {
                     if !content.is_empty() {
@@ -193,7 +169,6 @@ pub fn flatten_tool_messages(messages: &[Message]) -> Vec<Message> {
                 out.push(msg.clone());
             }
         } else if msg.role == "tool" {
-            // Convert tool results into user messages so non-tool models can understand.
             let content = msg
                 .content
                 .as_deref()
@@ -269,7 +244,6 @@ mod tests {
             .unwrap();
         assert_eq!(result, "echo: hello");
 
-        // Unknown tool should error.
         let err = registry
             .execute("unknown", serde_json::Value::Null)
             .await;
@@ -336,21 +310,17 @@ mod tests {
         let flat = flatten_tool_messages(&messages);
         assert_eq!(flat.len(), 4);
 
-        // First message unchanged
         assert_eq!(flat[0].role, "user");
 
-        // Assistant with tool calls flattened to text
         assert_eq!(flat[1].role, "assistant");
         assert!(flat[1].tool_calls.is_none());
         let content = flat[1].content.as_ref().unwrap();
         assert!(content.contains("Let me check."));
         assert!(content.contains("[Tool Call: get_weather"));
 
-        // Tool result becomes user message
         assert_eq!(flat[2].role, "user");
         assert!(flat[2].content.as_ref().unwrap().contains("72F and sunny"));
 
-        // Final assistant unchanged
         assert_eq!(flat[3].role, "assistant");
     }
 }

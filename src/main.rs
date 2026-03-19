@@ -1,7 +1,3 @@
-//! npcsh-rs — the NPC OS shell.
-//!
-//! Full-featured REPL with readline, tab completion, colored prompt,
-//! mode system, .npcshrc config, and streaming output.
 
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
@@ -13,7 +9,6 @@ use rustyline::validate::Validator;
 use rustyline::{CompletionType, Config, Editor, Helper};
 use std::borrow::Cow;
 
-// ── Colors ──
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
 const DIM: &str = "\x1b[90m";
@@ -23,7 +18,6 @@ const RED: &str = "\x1b[31m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
-// ── Tab Completion ──
 struct NpcHelper {
     npc_names: Vec<String>,
     commands: Vec<String>,
@@ -40,7 +34,6 @@ impl NpcHelper {
         .map(String::from)
         .collect::<Vec<_>>();
 
-        // Add jinxes as slash commands
         for j in jinx_names {
             commands.push(format!("/{}", j));
         }
@@ -64,7 +57,6 @@ impl Completer for NpcHelper {
         let mut matches = Vec::new();
 
         if word.starts_with('@') {
-            // NPC completion
             let prefix = &word[1..];
             for name in &self.npc_names {
                 if name.starts_with(prefix) {
@@ -75,7 +67,6 @@ impl Completer for NpcHelper {
                 }
             }
         } else if word.starts_with('/') {
-            // Command completion
             for cmd in &self.commands {
                 if cmd.starts_with(word) {
                     matches.push(Pair {
@@ -107,7 +98,6 @@ impl Highlighter for NpcHelper {
 impl Validator for NpcHelper {}
 impl Helper for NpcHelper {}
 
-// ── Mode ──
 #[derive(Clone, PartialEq)]
 enum Mode {
     Agent,
@@ -127,7 +117,6 @@ impl std::fmt::Display for Mode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Init logging
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -137,21 +126,16 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
 
-    // Load .env and .npcshrc
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
-    // Find team directory
     let team_dir = find_team_dir();
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
 
-    // Boot the kernel
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
-    // Print welcome
     print_welcome(&kernel);
 
-    // Set up readline
     let config = Config::builder()
         .completion_type(CompletionType::List)
         .build();
@@ -165,13 +149,11 @@ async fn main() -> Result<()> {
     rl.set_helper(Some(helper));
     let _ = rl.load_history(&history_path);
 
-    // REPL state
     let mut current_pid: u32 = 0;
     let mut mode = Mode::Agent;
     let mut turn_count: u64 = 0;
 
     loop {
-        // Build prompt
         let npc_name = kernel
             .get_process(current_pid)
             .map(|p| p.npc.name.as_str())
@@ -180,7 +162,6 @@ async fn main() -> Result<()> {
         let cwd = std::env::current_dir()
             .map(|p| {
                 let s = p.display().to_string();
-                // Shorten home dir
                 let home = shellexpand::tilde("~").to_string();
                 if let Some(rest) = s.strip_prefix(&home) {
                     format!("~{}", rest)
@@ -199,7 +180,6 @@ async fn main() -> Result<()> {
             "{DIM}{cwd}{RESET} {CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET}\n{PURPLE}>{RESET} "
         );
 
-        // Read input
         let input = match rl.readline(&prompt) {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
@@ -220,7 +200,6 @@ async fn main() -> Result<()> {
 
         rl.add_history_entry(&input).ok();
 
-        // ── Built-in commands ──
         let handled = match input.as_str() {
             "exit" | "quit" | "/quit" | "/exit" => break,
 
@@ -360,27 +339,23 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        // /set key=value
         if input.starts_with("/set ") {
             let rest = input.strip_prefix("/set ").unwrap().trim();
             handle_set_command(rest, &mut kernel, current_pid, &mut mode);
             continue;
         }
 
-        // @npc delegation or switch
         if input.starts_with('@') {
             let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
             let target = parts[0];
 
             if let Some(command) = parts.get(1) {
-                // Delegate
                 eprintln!("{DIM}delegating to @{target}...{RESET}");
                 match kernel.delegate(current_pid, target, command).await {
                     Ok(output) => println!("{}", output),
                     Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
                 }
             } else {
-                // Switch
                 if let Some(proc) = kernel.find_by_name(target) {
                     current_pid = proc.pid;
                     eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
@@ -394,19 +369,15 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        // /slash commands → try as jinx
         if input.starts_with('/') {
             let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
             let cmd_name = parts[0];
             let args_str = parts.get(1).unwrap_or(&"");
 
-            // Check if it's a known jinx
             if kernel.jinxes.contains_key(cmd_name) {
                 let mut args = std::collections::HashMap::new();
 
-                // Parse key=value args from the command line
                 if !args_str.is_empty() {
-                    // Try key=value pairs first
                     let mut has_kv = false;
                     for part in args_str.split_whitespace() {
                         if let Some((k, v)) = part.split_once('=') {
@@ -414,7 +385,6 @@ async fn main() -> Result<()> {
                             has_kv = true;
                         }
                     }
-                    // If no key=value, assign to first input
                     if !has_kv {
                         if let Some(first_input) = kernel.jinxes[cmd_name].inputs.first() {
                             args.insert(first_input.name.clone(), args_str.to_string());
@@ -436,7 +406,6 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        // ── cd is special — changes working directory (like npcsh handle_cd_command) ──
         if input.starts_with("cd ") || input == "cd" {
             let target = input.strip_prefix("cd").unwrap().trim();
             let target = if target.is_empty() {
@@ -444,7 +413,6 @@ async fn main() -> Result<()> {
             } else {
                 shellexpand::tilde(target).to_string()
             };
-            // Resolve relative paths
             let target = if std::path::Path::new(&target).is_relative() {
                 let cwd = std::env::current_dir().unwrap_or_default();
                 cwd.join(&target)
@@ -462,25 +430,20 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        // ── Terminal editors — hand over full terminal (like npcsh open_terminal_editor) ──
         if is_terminal_editor(&input) {
             run_interactive(&input);
             continue;
         }
 
-        // ── Interactive commands — hand over full terminal (like npcsh handle_interactive_command) ──
         if is_interactive(&input) {
             run_interactive(&input);
             continue;
         }
 
-        // ── Mode-specific dispatch (mirrors npcsh process_pipeline_command) ──
         turn_count += 1;
 
         match mode {
             Mode::Agent => {
-                // Agent: bash if it's a real command, LLM otherwise
-                // This is the npcsh pattern: validate_bash_command → handle_bash_command → else LLM
                 if is_bash_command(&input) {
                     run_bash(&input).await;
                 } else {
@@ -492,7 +455,6 @@ async fn main() -> Result<()> {
                 }
             }
             Mode::Chat => {
-                // Chat: always LLM, no tools
                 match kernel.exec_chat(current_pid, &input).await {
                     Ok(output) if !output.is_empty() => println!("{}", output),
                     Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
@@ -500,7 +462,6 @@ async fn main() -> Result<()> {
                 }
             }
             Mode::Cmd => {
-                // Cmd: always bash first, LLM fallback
                 if !run_bash(&input).await {
                     match kernel.exec(current_pid, &input).await {
                         Ok(output) if !output.is_empty() => println!("{}", output),
@@ -511,7 +472,6 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Show usage after each turn
         if let Some(p) = kernel.get_process(current_pid) {
             if p.usage.total_turns > 0 {
                 eprintln!(
@@ -525,7 +485,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Save history
     let _ = rl.save_history(&history_path);
 
     eprintln!("\n{DIM}Kernel shutting down.{RESET}");
@@ -537,7 +496,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Handle /set key=value commands.
 fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode) {
     let parts: Vec<&str> = rest.splitn(2, '=').collect();
     if parts.len() != 2 {
@@ -571,7 +529,6 @@ fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode
     }
 }
 
-/// Print the welcome screen.
 fn print_welcome(kernel: &Kernel) {
     let s = kernel.stats();
 
@@ -587,17 +544,14 @@ fn print_welcome(kernel: &Kernel) {
     eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
     eprintln!();
 
-    // NPCs
     eprint!("  {BOLD}Agents:{RESET} ");
     let names: Vec<String> = kernel.ps().iter().map(|p| format!("{CYAN}@{}{RESET}", p.npc.name)).collect();
     eprintln!("{}", names.join("  "));
 
-    // Modes
     eprintln!("  {BOLD}Modes:{RESET}  {CYAN}/agent{RESET}  {CYAN}/chat{RESET}  {CYAN}/cmd{RESET}");
     eprintln!();
 }
 
-/// Load ~/.npcshrc if it exists (sets env vars for model/provider config).
 fn load_npcshrc() {
     let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
     let path = std::path::Path::new(&rc_path);
@@ -606,30 +560,24 @@ fn load_npcshrc() {
         return;
     }
 
-    // Parse simple KEY=VALUE and export KEY=VALUE lines
     if let Ok(content) = std::fs::read_to_string(path) {
         for line in content.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            // Strip "export " prefix
             let line = line.strip_prefix("export ").unwrap_or(line);
 
             if let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
                 let value = value.trim().trim_matches('"').trim_matches('\'');
-                // Only set if not already set (env takes precedence)
                 if std::env::var(key).is_err() {
-                    // SAFETY: We only call this at startup before spawning threads
                     unsafe { std::env::set_var(key, value) };
                 }
             }
         }
     }
 }
-
-// ── Terminal/Interactive command lists (from npcsh/execution.py) ──
 
 const TERMINAL_EDITORS: &[&str] = &[
     "vim", "nvim", "nano", "vi", "emacs", "less", "more", "man",
@@ -648,8 +596,6 @@ const SHELL_BUILTINS: &[&str] = &[
     "kill", "ulimit", "umask", "type", "hash", "true", "false",
 ];
 
-/// Check if input is a bash command — the npcsh way.
-/// Checks shell builtins first, then looks up the command in PATH via `which`.
 fn is_bash_command(input: &str) -> bool {
     let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.is_empty() {
@@ -658,12 +604,10 @@ fn is_bash_command(input: &str) -> bool {
 
     let cmd = parts[0];
 
-    // Shell builtins
     if SHELL_BUILTINS.contains(&cmd) {
         return true;
     }
 
-    // Check PATH (equivalent to shutil.which)
     if let Ok(output) = std::process::Command::new("which")
         .arg(cmd)
         .output()
@@ -674,19 +618,16 @@ fn is_bash_command(input: &str) -> bool {
     false
 }
 
-/// Check if input is a terminal editor.
 fn is_terminal_editor(input: &str) -> bool {
     let cmd = input.split_whitespace().next().unwrap_or("");
     TERMINAL_EDITORS.contains(&cmd)
 }
 
-/// Check if input is an interactive command.
 fn is_interactive(input: &str) -> bool {
     let cmd = input.split_whitespace().next().unwrap_or("");
     INTERACTIVE_COMMANDS.contains(&cmd)
 }
 
-/// Run a bash command directly, returning true if it succeeded.
 async fn run_bash(input: &str) -> bool {
     match tokio::process::Command::new("bash")
         .arg("-c")
@@ -704,7 +645,6 @@ async fn run_bash(input: &str) -> bool {
     }
 }
 
-/// Run an interactive/editor command (inherits full terminal).
 fn run_interactive(input: &str) {
     let _ = std::process::Command::new("bash")
         .arg("-c")
@@ -715,9 +655,7 @@ fn run_interactive(input: &str) {
         .status();
 }
 
-/// Find the team directory (project-local or global).
 fn find_team_dir() -> String {
-    // CLI args
     let args: Vec<String> = std::env::args().collect();
     if let Some(pos) = args.iter().position(|a| a == "--team") {
         if let Some(dir) = args.get(pos + 1) {
@@ -725,12 +663,10 @@ fn find_team_dir() -> String {
         }
     }
 
-    // Project-local
     if std::path::Path::new("./npc_team").exists() {
         return "./npc_team".to_string();
     }
 
-    // Global
     let global = shellexpand::tilde("~/.npcsh/npc_team").to_string();
     if std::path::Path::new(&global).exists() {
         return global;

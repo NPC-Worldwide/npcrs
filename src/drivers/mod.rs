@@ -1,4 +1,3 @@
-//! Drivers — external tool providers managed by the kernel.
 
 pub struct DriverManager;
 

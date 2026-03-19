@@ -1,4 +1,3 @@
-//! Event triggers.
 
 use crate::error::Result;
 use serde::{Deserialize, Serialize};

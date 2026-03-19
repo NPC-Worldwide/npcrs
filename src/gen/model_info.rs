@@ -1,29 +1,12 @@
-//! Model-to-provider resolution.
-//!
-//! Given a model name, infers which LLM provider to use.
-//! Checks NPCSH_CHAT_MODEL / NPCSH_CHAT_PROVIDER env vars as defaults.
 
-/// Default model when nothing is configured.
 pub const DEFAULT_MODEL: &str = "llama3.2";
-/// Default provider when nothing is configured.
 pub const DEFAULT_PROVIDER: &str = "ollama";
 
-/// Given a model name string, resolve the (model, provider) pair.
-///
-/// Rules:
-/// - starts with "gpt-", "o1", "o3", "o4", "dall-e" -> "openai"
-/// - starts with "claude-" -> "anthropic"
-/// - starts with "gemini-" -> "google"
-/// - starts with "llama", "mixtral", "deepseek", "mistral", "phi", "qwen" -> "ollama"
-/// - starts with "grok" -> "xai"
-/// - Falls back to env vars NPCSH_CHAT_MODEL / NPCSH_CHAT_PROVIDER
-/// - Ultimate default: ("llama3.2", "ollama")
 pub fn resolve_model_provider(model: &str) -> (String, String) {
     let provider = infer_provider(model);
     (model.to_string(), provider)
 }
 
-/// Infer provider from model name alone.
 pub fn infer_provider(model: &str) -> String {
     let m = model.to_lowercase();
 
@@ -48,7 +31,6 @@ pub fn infer_provider(model: &str) -> String {
         return "xai".to_string();
     }
 
-    // Open-source models typically served by Ollama
     if m.starts_with("llama")
         || m.starts_with("mixtral")
         || m.starts_with("deepseek")
@@ -64,7 +46,6 @@ pub fn infer_provider(model: &str) -> String {
         return "ollama".to_string();
     }
 
-    // Check env var fallback
     if let Ok(provider) = std::env::var("NPCSH_CHAT_PROVIDER") {
         if !provider.is_empty() {
             return provider;
@@ -74,12 +55,10 @@ pub fn infer_provider(model: &str) -> String {
     DEFAULT_PROVIDER.to_string()
 }
 
-/// Get the default model from env or hardcoded default.
 pub fn default_model() -> String {
     std::env::var("NPCSH_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string())
 }
 
-/// Get the default provider from env or hardcoded default.
 pub fn default_provider() -> String {
     std::env::var("NPCSH_CHAT_PROVIDER").unwrap_or_else(|_| DEFAULT_PROVIDER.to_string())
 }

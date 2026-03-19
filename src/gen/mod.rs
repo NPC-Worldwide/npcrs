@@ -1,6 +1,3 @@
-//! Generation module — mirrors npcpy.gen
-//!
-//! LLM response, cost, sanitization, image gen, model info.
 
 pub mod response_types;
 
@@ -11,6 +8,8 @@ pub mod response;
 #[cfg(feature = "llamacpp")]
 pub mod llamacpp;
 mod image;
+pub mod embeddings;
+pub mod audio_gen;
 
 pub use response_types::*;
 pub use sanitize::sanitize_messages;

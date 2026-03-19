@@ -1,15 +1,7 @@
-//! Embedding support for memory search.
-//!
-//! Calls Ollama `/api/embeddings` or OpenAI `/v1/embeddings` to vectorize text.
 
 use crate::error::{NpcError, Result};
 use reqwest::Client;
 
-/// Get embeddings for text using the configured embedding provider.
-///
-/// Supported providers:
-/// - `"ollama"`: POST to `{OLLAMA_HOST}/api/embeddings`
-/// - `"openai"`: POST to `https://api.openai.com/v1/embeddings`
 pub async fn get_embeddings(
     text: &str,
     model: &str,
@@ -26,7 +18,6 @@ pub async fn get_embeddings(
                 .ok_or_else(|| {
                     NpcError::LlmRequest("OPENAI_API_KEY not set for embeddings".to_string())
                 })?;
-            // Re-read env since the or_else trick above is just for the check.
             let key = api_key
                 .map(|s| s.to_string())
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok())
@@ -39,7 +30,6 @@ pub async fn get_embeddings(
     }
 }
 
-/// Get embeddings from Ollama.
 async fn get_embeddings_ollama(client: &Client, text: &str, model: &str) -> Result<Vec<f64>> {
     let base_url =
         std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
@@ -61,7 +51,6 @@ async fn get_embeddings_ollama(client: &Client, text: &str, model: &str) -> Resu
 
     let json: serde_json::Value = resp.json().await?;
 
-    // Ollama returns {"embedding": [f64, ...]}
     let embedding = json
         .get("embedding")
         .and_then(|v| v.as_array())
@@ -83,7 +72,6 @@ async fn get_embeddings_ollama(client: &Client, text: &str, model: &str) -> Resu
     Ok(vec)
 }
 
-/// Get embeddings from OpenAI.
 async fn get_embeddings_openai(
     client: &Client,
     text: &str,
@@ -108,7 +96,6 @@ async fn get_embeddings_openai(
 
     let json: serde_json::Value = resp.json().await?;
 
-    // OpenAI returns {"data": [{"embedding": [f64, ...]}]}
     let embedding = json
         .get("data")
         .and_then(|d| d.get(0))
@@ -134,10 +121,6 @@ async fn get_embeddings_openai(
     Ok(vec)
 }
 
-/// Cosine similarity between two vectors.
-///
-/// Returns a value in [-1, 1] where 1 means identical direction.
-/// Returns 0.0 if either vector has zero magnitude.
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;

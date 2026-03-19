@@ -1,4 +1,3 @@
-//! Browser session management — mirrors npcpy.work.browser
 
 use std::collections::HashMap;
 use std::sync::Mutex;

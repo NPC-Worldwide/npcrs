@@ -1,4 +1,3 @@
-//! Video utilities — mirrors npcpy.data.video
 
 use crate::error::Result;
 
