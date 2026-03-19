@@ -1,9 +1,9 @@
 
-mod history;
+mod command_history;
 mod knowledge_graph;
 pub mod embeddings;
-pub mod processor;
+pub mod memory_processor;
 pub mod search;
 
-pub use history::*;
+pub use command_history::*;
 pub use knowledge_graph::*;

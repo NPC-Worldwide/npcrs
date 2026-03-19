@@ -366,6 +366,76 @@ fn parse_kg_from_llm_response(response: &str) -> Result<KnowledgeGraph> {
     Ok(kg)
 }
 
+pub fn kg_add_fact(kg: &mut KnowledgeGraph, statement: &str, source_text: Option<&str>, fact_type: Option<&str>) -> NodeIndex {
+    let mut node_idx = kg.add_entity(statement, KgNodeType::Fact, source_text.unwrap_or(""));
+    if let Some(ft) = fact_type {
+        kg.graph[node_idx].metadata.insert("type".into(), ft.into());
+    }
+    node_idx
+}
+
+pub fn kg_search_facts(kg: &KnowledgeGraph, query: &str) -> Vec<&KgNode> {
+    kg.search_facts(query)
+}
+
+pub fn kg_remove_fact(kg: &mut KnowledgeGraph, fact_name: &str) -> bool {
+    if let Some(&idx) = kg.name_index.get(fact_name) {
+        kg.graph.remove_node(idx);
+        kg.name_index.remove(fact_name);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn kg_list_concepts(kg: &KnowledgeGraph) -> Vec<&KgNode> {
+    kg.entities_of_type(&KgNodeType::Concept)
+}
+
+pub fn kg_get_facts_for_concept(kg: &KnowledgeGraph, concept_name: &str) -> Vec<(&KgNode, &KgEdge)> {
+    kg.neighbors(concept_name)
+        .into_iter()
+        .filter(|(n, _)| n.node_type == KgNodeType::Fact)
+        .collect()
+}
+
+pub fn kg_add_concept(kg: &mut KnowledgeGraph, name: &str, content: Option<&str>) -> NodeIndex {
+    kg.add_entity(name, KgNodeType::Concept, content.unwrap_or(""))
+}
+
+pub fn kg_remove_concept(kg: &mut KnowledgeGraph, concept_name: &str) -> bool {
+    if let Some(&idx) = kg.name_index.get(concept_name) {
+        kg.graph.remove_node(idx);
+        kg.name_index.remove(concept_name);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn kg_link_fact_to_concept(kg: &mut KnowledgeGraph, fact_name: &str, concept_name: &str, relation: Option<&str>) {
+    kg.add_relation(fact_name, concept_name, relation.unwrap_or("belongs_to"), 1.0);
+}
+
+pub fn kg_get_all_facts(kg: &KnowledgeGraph) -> Vec<&KgNode> {
+    kg.entities_of_type(&KgNodeType::Fact)
+}
+
+pub fn kg_get_stats(kg: &KnowledgeGraph) -> HashMap<String, usize> {
+    let mut stats = HashMap::new();
+    stats.insert("total_nodes".into(), kg.entity_count());
+    stats.insert("total_edges".into(), kg.relation_count());
+    stats.insert("facts".into(), kg.entities_of_type(&KgNodeType::Fact).len());
+    stats.insert("concepts".into(), kg.entities_of_type(&KgNodeType::Concept).len());
+    stats.insert("entities".into(), kg.entities_of_type(&KgNodeType::Entity).len());
+    stats.insert("generation".into(), kg.generation() as usize);
+    stats
+}
+
+pub async fn kg_evolve_knowledge(kg: &mut KnowledgeGraph, new_text: &str, model: &str, provider: &str) -> Result<()> {
+    kg_evolve_incremental(kg, new_text, model, provider).await
+}
+
 fn extract_json_from_response(response: &str) -> &str {
     let trimmed = response.trim();
 

@@ -237,43 +237,6 @@ fn make_result(response: Option<String>, response_json: Option<serde_json::Value
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum CommandType {
-    Empty,
-    Jinx { name: String, args: String },
-    Delegate { npc_name: String, message: String },
-    Bash(String),
-    LlmQuery(String),
-}
-
-pub fn classify_input(input: &str) -> CommandType {
-    let trimmed = input.trim();
-    if trimmed.is_empty() { return CommandType::Empty; }
-    if trimmed.starts_with('/') {
-        let parts: Vec<&str> = trimmed[1..].splitn(2, ' ').collect();
-        return CommandType::Jinx { name: parts[0].to_string(), args: parts.get(1).unwrap_or(&"").to_string() };
-    }
-    if trimmed.starts_with('@') {
-        let parts: Vec<&str> = trimmed[1..].splitn(2, ' ').collect();
-        return CommandType::Delegate { npc_name: parts[0].to_string(), message: parts.get(1).unwrap_or(&"").to_string() };
-    }
-    if is_likely_bash(trimmed) { return CommandType::Bash(trimmed.to_string()); }
-    CommandType::LlmQuery(trimmed.to_string())
-}
-
-pub fn check_llm_command(input: &str) -> CommandType {
-    classify_input(input)
-}
-
-fn is_likely_bash(input: &str) -> bool {
-    let first_word = input.split_whitespace().next().unwrap_or("");
-    matches!(first_word,
-        "ls" | "cd" | "pwd" | "cat" | "grep" | "find" | "mkdir" | "rm" | "cp" | "mv" |
-        "echo" | "touch" | "chmod" | "head" | "tail" | "wc" | "sort" | "curl" | "wget" |
-        "git" | "docker" | "make" | "cargo" | "npm" | "pip" | "python" | "python3" | "node"
-    )
-}
-
 pub async fn execute_llm_command(
     command: &str,
     model: Option<&str>,
@@ -613,7 +576,7 @@ pub async fn handle_action_choice(
     }
 }
 
-pub async fn check_llm_command_plan(
+pub async fn check_llm_command(
     command: &str,
     model: Option<&str>,
     provider: Option<&str>,
@@ -707,7 +670,7 @@ pub async fn check_llm_command_plan(
                 "In the previous attempt, the correct action name was not provided. \
                 Only select from available jinxes.\nOriginal request: {}", command
             );
-            return check_llm_command_plan(
+            return check_llm_command(
                 &retry_prompt, model, provider, npc, messages, context, jinxes,
                 max_iterations.saturating_sub(1),
             ).await;
@@ -1247,58 +1210,6 @@ pub async fn synthesize(prompt: &str, model: Option<&str>, provider: Option<&str
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_classify_input_empty() {
-        assert_eq!(classify_input(""), CommandType::Empty);
-        assert_eq!(classify_input("  "), CommandType::Empty);
-    }
-
-    #[test]
-    fn test_classify_input_jinx() {
-        match classify_input("/search hello world") {
-            CommandType::Jinx { name, args } => {
-                assert_eq!(name, "search");
-                assert_eq!(args, "hello world");
-            }
-            other => panic!("Expected Jinx, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_classify_input_jinx_no_args() {
-        match classify_input("/help") {
-            CommandType::Jinx { name, args } => {
-                assert_eq!(name, "help");
-                assert_eq!(args, "");
-            }
-            other => panic!("Expected Jinx, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_classify_input_delegate() {
-        match classify_input("@corca what is the weather") {
-            CommandType::Delegate { npc_name, message } => {
-                assert_eq!(npc_name, "corca");
-                assert_eq!(message, "what is the weather");
-            }
-            other => panic!("Expected Delegate, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_classify_input_bash() {
-        assert!(matches!(classify_input("ls -la"), CommandType::Bash(_)));
-        assert!(matches!(classify_input("git status"), CommandType::Bash(_)));
-        assert!(matches!(classify_input("cargo build"), CommandType::Bash(_)));
-    }
-
-    #[test]
-    fn test_classify_input_llm_query() {
-        assert!(matches!(classify_input("what is the meaning of life"), CommandType::LlmQuery(_)));
-        assert!(matches!(classify_input("explain quantum computing"), CommandType::LlmQuery(_)));
-    }
 
     #[test]
     fn test_resolve_model_provider_defaults() {

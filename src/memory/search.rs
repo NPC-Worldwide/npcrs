@@ -78,6 +78,58 @@ pub fn search_memories_by_keyword(
     Ok(results)
 }
 
+pub async fn execute_search_command(command: &str, provider: Option<&str>, num_results: usize) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    let results = crate::data::web::search_web(command, num_results, provider.unwrap_or("duckduckgo"), None).await?;
+    let output: String = results.iter().enumerate().map(|(i, r)| {
+        format!("{}. {} - {}\n   {}", i + 1, r.title, r.url, r.snippet)
+    }).collect::<Vec<_>>().join("\n\n");
+    let citations: Vec<String> = results.iter().map(|r| r.url.clone()).collect();
+    let mut r = std::collections::HashMap::new();
+    r.insert("output".into(), serde_json::json!(format!("{}\n\nCitation Links: {:?}", output, citations)));
+    r.insert("messages".into(), serde_json::json!([
+        {"role": "user", "content": command},
+        {"role": "assistant", "content": output}
+    ]));
+    Ok(r)
+}
+
+pub async fn execute_rag_command(
+    command: &str,
+    db_path: &str,
+    embedding_model: &str,
+    embedding_provider: &str,
+    top_k: usize,
+) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    let similar = search_similar_texts(command, db_path, embedding_model, embedding_provider, top_k).await?;
+    let context: String = similar.iter().map(|r| r.content.clone()).collect::<Vec<_>>().join("\n\n---\n\n");
+    let mut r = std::collections::HashMap::new();
+    r.insert("context".into(), serde_json::json!(context));
+    r.insert("results".into(), serde_json::json!(similar.len()));
+    Ok(r)
+}
+
+pub async fn execute_brainblast_command(
+    command: &str,
+    db_path: &str,
+    embedding_model: &str,
+    embedding_provider: &str,
+    model: &str,
+    provider: &str,
+    top_k: usize,
+) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+    let similar = search_similar_texts(command, db_path, embedding_model, embedding_provider, top_k).await?;
+    let context: String = similar.iter().map(|r| r.content.clone()).collect::<Vec<_>>().join("\n\n");
+    let prompt = format!(
+        "Using the following context from memory, answer the question.\n\nContext:\n{}\n\nQuestion: {}",
+        context, command
+    );
+    let result = crate::llm_funcs::get_llm_response(&prompt, None, Some(model), Some(provider), None, &[], None).await?;
+    let mut r = std::collections::HashMap::new();
+    r.insert("output".into(), serde_json::json!(result.response.unwrap_or_default()));
+    r.insert("context_used".into(), serde_json::json!(similar.len()));
+    Ok(r)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,6 +8,7 @@ pub async fn speech_to_text(audio_data: &[u8], engine: &str, language: Option<&s
         "openai" => stt_openai(audio_data, None, "whisper-1", language).await,
         "gemini" => stt_gemini(audio_data, None, "gemini-1.5-flash", language).await,
         "groq" => stt_groq(audio_data, None, "whisper-large-v3", language).await,
+        "elevenlabs" => stt_elevenlabs(audio_data, None, "scribe_v1", language).await,
         other => Err(NpcError::Shell(format!("Unknown STT engine: {}", other))),
     }
 }
@@ -70,6 +71,29 @@ pub async fn stt_groq(audio_data: &[u8], api_key: Option<&str>, model: &str, lan
     if !resp.status().is_success() { return Err(NpcError::LlmRequest(format!("Groq STT: {}", resp.text().await.unwrap_or_default()))); }
     let json: serde_json::Value = resp.json().await?;
     let mut r = HashMap::new(); r.insert("text".into(), json.get("text").cloned().unwrap_or(serde_json::Value::String(String::new()))); Ok(r)
+}
+
+pub async fn stt_elevenlabs(audio_data: &[u8], api_key: Option<&str>, model_id: &str, language: Option<&str>) -> Result<HashMap<String, serde_json::Value>> {
+    let key = api_key.map(String::from).or_else(|| std::env::var("ELEVENLABS_API_KEY").ok()).ok_or_else(|| NpcError::LlmRequest("ELEVENLABS_API_KEY not set".into()))?;
+    let file_part = reqwest::multipart::Part::bytes(audio_data.to_vec()).file_name("audio.wav").mime_str("audio/wav").map_err(|e| NpcError::LlmRequest(format!("MIME: {}", e)))?;
+    let mut form = reqwest::multipart::Form::new().part("file", file_part).text("model_id", model_id.to_string());
+    if let Some(l) = language { form = form.text("language_code", l.to_string()); }
+    let resp = reqwest::Client::new().post("https://api.elevenlabs.io/v1/speech-to-text").header("xi-api-key", &key).multipart(form).send().await?;
+    if !resp.status().is_success() { return Err(NpcError::LlmRequest(format!("ElevenLabs STT: {}", resp.text().await.unwrap_or_default()))); }
+    let json: serde_json::Value = resp.json().await?;
+    let mut r = HashMap::new();
+    r.insert("text".into(), json.get("text").cloned().unwrap_or(serde_json::Value::String(String::new())));
+    r.insert("language".into(), json.get("language_code").cloned().unwrap_or(serde_json::Value::Null));
+    Ok(r)
+}
+
+pub fn get_available_stt_engines() -> HashMap<String, bool> {
+    let mut engines = HashMap::new();
+    engines.insert("openai".into(), std::env::var("OPENAI_API_KEY").is_ok());
+    engines.insert("groq".into(), std::env::var("GROQ_API_KEY").is_ok());
+    engines.insert("gemini".into(), std::env::var("GOOGLE_API_KEY").is_ok() || std::env::var("GEMINI_API_KEY").is_ok());
+    engines.insert("elevenlabs".into(), std::env::var("ELEVENLABS_API_KEY").is_ok());
+    engines
 }
 
 pub fn transcribe_audio_file(file_path: &str, language: Option<&str>) -> Result<String> {

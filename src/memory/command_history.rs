@@ -389,6 +389,76 @@ impl CommandHistory {
         )?;
         Ok(())
     }
+
+    pub fn retrieve_last_conversation(&self) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT conversation_id FROM conversation_history ORDER BY timestamp DESC LIMIT 1"
+        )?;
+        let result = stmt.query_row(params![], |row| row.get::<_, String>(0));
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn save_npc_version(&self, npc_name: &str, content: &str) -> Result<i64> {
+        let version: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM npc_versions WHERE npc_name = ?1",
+            params![npc_name],
+            |row| row.get(0),
+        ).unwrap_or(1);
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO npc_versions (npc_name, version, content, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![npc_name, version, content, now],
+        )?;
+        Ok(version)
+    }
+
+    pub fn get_npc_versions(&self, npc_name: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT version, created_at FROM npc_versions WHERE npc_name = ?1 ORDER BY version DESC"
+        )?;
+        let results = stmt.query_map(params![npc_name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_npc_version_content(&self, npc_name: &str, version: Option<i64>) -> Result<Option<String>> {
+        let query = if let Some(v) = version {
+            self.conn.query_row(
+                "SELECT content FROM npc_versions WHERE npc_name = ?1 AND version = ?2",
+                params![npc_name, v],
+                |row| row.get::<_, String>(0),
+            )
+        } else {
+            self.conn.query_row(
+                "SELECT content FROM npc_versions WHERE npc_name = ?1 ORDER BY version DESC LIMIT 1",
+                params![npc_name],
+                |row| row.get::<_, String>(0),
+            )
+        };
+        match query {
+            Ok(content) => Ok(Some(content)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn rollback_npc_to_version(&self, npc_name: &str, version: i64) -> Result<Option<String>> {
+        self.get_npc_version_content(npc_name, Some(version))
+    }
+
+    pub fn save_attachment_to_message(&self, message_id: &str, attachment_type: &str, data: &[u8], filename: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR IGNORE INTO message_attachments (message_id, attachment_type, data, filename, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![message_id, attachment_type, data, filename, now],
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

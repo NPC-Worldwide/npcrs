@@ -7,14 +7,14 @@ pub mod model_info;
 pub mod response;
 #[cfg(feature = "llamacpp")]
 pub mod llamacpp;
-mod image;
+mod image_gen;
 pub mod embeddings;
 pub mod audio_gen;
 
 pub use response_types::*;
 pub use sanitize::sanitize_messages;
 pub use cost::calculate_cost;
-pub use image::*;
+pub use image_gen::*;
 pub use response::get_genai_response;
 #[cfg(feature = "llamacpp")]
 pub use llamacpp::get_llamacpp_response;
