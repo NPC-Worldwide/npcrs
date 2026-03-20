@@ -1287,7 +1287,18 @@ fn wrap_python_with_context(code: &str, context: &HashMap<String, serde_json::Va
     wrapper.push_str("state = _State()\n");
     wrapper.push_str("class _NPC:\n");
     wrapper.push_str("    name = \"assistant\"\n");
+    wrapper.push_str("    model = os.environ.get('NPCSH_CHAT_MODEL', 'llama3.2')\n");
+    wrapper.push_str("    provider = os.environ.get('NPCSH_CHAT_PROVIDER', 'ollama')\n");
+    wrapper.push_str("    api_url = None\n");
+    wrapper.push_str("    api_key = None\n");
     wrapper.push_str("npc = _NPC()\n");
+    wrapper.push_str("if 'npc' in context:\n");
+    wrapper.push_str("    if isinstance(context['npc'], dict):\n");
+    wrapper.push_str("        npc.name = context['npc'].get('name', npc.name)\n");
+    wrapper.push_str("        npc.model = context['npc'].get('model', npc.model)\n");
+    wrapper.push_str("        npc.provider = context['npc'].get('provider', npc.provider)\n");
+    wrapper.push_str("    elif isinstance(context['npc'], str):\n");
+    wrapper.push_str("        npc.name = context['npc']\n");
     wrapper.push_str("try:\n");
     wrapper.push_str(&indented_code);
     wrapper.push('\n');
