@@ -1,7 +1,7 @@
 
 use crate::error::Result;
 use crate::r#gen::Message;
-use crate::npc_compiler::Npc;
+use crate::npc_compiler::NPC;
 
 #[derive(Debug, Clone)]
 pub struct DebateRound {
@@ -17,7 +17,7 @@ pub struct DebateResult {
 
 pub async fn debate(
     
-    npcs: &[&Npc],
+    npcs: &[&NPC],
     topic: &str,
     rounds: usize,
 ) -> Result<DebateResult> {
@@ -101,7 +101,7 @@ pub async fn debate(
 
 async fn generate_summary(
     
-    summarizer: &Npc,
+    summarizer: &NPC,
     topic: &str,
     conversation_history: &str,
 ) -> Result<String> {

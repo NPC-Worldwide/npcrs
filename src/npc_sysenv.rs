@@ -215,9 +215,9 @@ pub fn load_custom_providers() -> HashMap<String, serde_json::Value> {
     providers
 }
 
-use crate::npc_compiler::{Npc, Jinx};
+use crate::npc_compiler::{NPC, Jinx};
 
-pub fn get_system_message(npc: Option<&Npc>, tool_capable: bool, team_context: Option<&str>, team_members: Option<&[(String, String)]>, jinxes: &HashMap<String, Jinx>) -> String {
+pub fn get_system_message(npc: Option<&NPC>, tool_capable: bool, team_context: Option<&str>, team_members: Option<&[(String, String)]>, jinxes: &HashMap<String, Jinx>) -> String {
     let npc = match npc {
         Some(n) => n,
         None => return "You are a helpful assistant".into(),

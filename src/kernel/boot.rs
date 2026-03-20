@@ -47,7 +47,7 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
         .team
         .lead_npc()
         .cloned()
-        .unwrap_or_else(|| crate::npc_compiler::Npc::new("init", "You are the init process. Coordinate the system."));
+        .unwrap_or_else(|| crate::npc_compiler::NPC::new("init", "You are the init process. Coordinate the system."));
 
     kernel.spawn_init(init_npc);
     tracing::info!("kernel: init process spawned (pid 0)");

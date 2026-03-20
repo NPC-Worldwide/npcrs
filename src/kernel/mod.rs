@@ -11,7 +11,7 @@ use crate::ipc::IpcBus;
 use crate::npc_compiler::{self, Jinx};
 use crate::r#gen::Message;
 use crate::memory::CommandHistory;
-use crate::npc_compiler::Npc;
+use crate::npc_compiler::NPC;
 use crate::process::{Capabilities, Pid, Process, ProcessState};
 use crate::scheduler::Scheduler;
 use crate::npc_compiler::Team;
@@ -46,7 +46,7 @@ impl Kernel {
         boot::boot_kernel(team_dir, db_path)
     }
 
-    pub fn spawn(&mut self, npc: Npc, ppid: Pid, capabilities: Capabilities) -> Pid {
+    pub fn spawn(&mut self, npc: NPC, ppid: Pid, capabilities: Capabilities) -> Pid {
         let pid = self.next_pid.fetch_add(1, Ordering::Relaxed);
         let mut process = Process::spawn(pid, ppid, npc, capabilities);
 
@@ -62,7 +62,7 @@ impl Kernel {
         pid
     }
 
-    pub fn spawn_init(&mut self, npc: Npc) -> Pid {
+    pub fn spawn_init(&mut self, npc: NPC) -> Pid {
         let pid = 0;
         self.next_pid.store(1, Ordering::Relaxed);
         let mut process = Process::spawn(pid, 0, npc, Capabilities::root());

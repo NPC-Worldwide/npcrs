@@ -16,19 +16,21 @@ pub fn start_new_conversation() -> String {
 pub struct CommandHistory {
     conn: Connection,
     pool: Option<sqlx::AnyPool>,
+    pub db_path: String,
 }
 
 impl CommandHistory {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let p = path.as_ref().to_string_lossy().to_string();
         let conn = Connection::open(path.as_ref())?;
-        let history = Self { conn, pool: None };
+        let history = Self { conn, pool: None, db_path: p };
         history.init_tables()?;
         Ok(history)
     }
 
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let history = Self { conn, pool: None };
+        let history = Self { conn, pool: None, db_path: ":memory:".to_string() };
         history.init_tables()?;
         Ok(history)
     }
@@ -42,7 +44,7 @@ impl CommandHistory {
         };
         let pool = sqlx::AnyPool::connect(&url).await
             .map_err(|e| crate::error::NpcError::Other(format!("sqlx connect: {}", e)))?;
-        let history = Self { conn, pool: Some(pool) };
+        let history = Self { conn, pool: Some(pool), db_path: path.to_string() };
         history.init_tables()?;
         Ok(history)
     }

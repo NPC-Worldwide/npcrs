@@ -35,7 +35,7 @@ pub mod ffi;
 pub mod db;
 pub mod error;
 
-pub use npc_compiler::{Npc, Team, Jinx, Agent, ToolAgent, CodingAgent};
+pub use npc_compiler::{NPC, Team, Jinx, Agent, ToolAgent, CodingAgent};
 pub use r#gen::{Message, ToolCall, ToolDef, LlmResponse, Usage};
 pub use r#gen::{calculate_cost, sanitize_messages};
 pub use process::Process;

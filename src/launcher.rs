@@ -19,11 +19,11 @@ pub fn load_team(team_path: &str) -> Result<crate::npc_compiler::Team> {
     crate::npc_compiler::load_team_from_directory(team_path)
 }
 
-pub fn pick_npc(npcs: &HashMap<String, crate::npc_compiler::Npc>) -> String {
+pub fn pick_npc(npcs: &HashMap<String, crate::npc_compiler::NPC>) -> String {
     npcs.keys().next().map(|s| s.clone()).unwrap_or_else(|| "assistant".to_string())
 }
 
-pub fn build_system_prompt(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>) -> String {
+pub fn build_system_prompt(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>) -> String {
     if let Some(npc) = npcs.get(npc_name) {
         npc.system_prompt(None)
     } else {
@@ -31,7 +31,7 @@ pub fn build_system_prompt(npc_name: &str, npcs: &HashMap<String, crate::npc_com
     }
 }
 
-pub fn launch_claude(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>, extra_args: &[String]) -> Result<()> {
+pub fn launch_claude(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>, extra_args: &[String]) -> Result<()> {
     let prompt = build_system_prompt(npc_name, npcs);
     let mut args = vec!["--system-prompt".to_string(), prompt];
     args.extend(extra_args.iter().cloned());
@@ -41,7 +41,7 @@ pub fn launch_claude(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler:
     Ok(())
 }
 
-pub fn launch_codex(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>, extra_args: &[String]) -> Result<()> {
+pub fn launch_codex(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>, extra_args: &[String]) -> Result<()> {
     let prompt = build_system_prompt(npc_name, npcs);
     let mut args = vec!["--full-context".to_string(), "--instructions".to_string(), prompt];
     args.extend(extra_args.iter().cloned());
@@ -51,7 +51,7 @@ pub fn launch_codex(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::
     Ok(())
 }
 
-pub fn launch_gemini(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>, extra_args: &[String]) -> Result<()> {
+pub fn launch_gemini(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>, extra_args: &[String]) -> Result<()> {
     let prompt = build_system_prompt(npc_name, npcs);
     let mut args = vec!["--system-instruction".to_string(), prompt];
     args.extend(extra_args.iter().cloned());
@@ -61,7 +61,7 @@ pub fn launch_gemini(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler:
     Ok(())
 }
 
-pub fn launch_opencode(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>, extra_args: &[String]) -> Result<()> {
+pub fn launch_opencode(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>, extra_args: &[String]) -> Result<()> {
     let prompt = build_system_prompt(npc_name, npcs);
     let mut args = vec!["--system-prompt".to_string(), prompt];
     args.extend(extra_args.iter().cloned());
@@ -71,7 +71,7 @@ pub fn launch_opencode(npc_name: &str, npcs: &HashMap<String, crate::npc_compile
     Ok(())
 }
 
-pub fn launch_aider(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>, extra_args: &[String]) -> Result<()> {
+pub fn launch_aider(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>, extra_args: &[String]) -> Result<()> {
     let prompt = build_system_prompt(npc_name, npcs);
     let mut args = vec!["--system-prompt".to_string(), prompt];
     args.extend(extra_args.iter().cloned());
@@ -81,7 +81,7 @@ pub fn launch_aider(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::
     Ok(())
 }
 
-pub fn launch_amp(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::Npc>, extra_args: &[String]) -> Result<()> {
+pub fn launch_amp(npc_name: &str, npcs: &HashMap<String, crate::npc_compiler::NPC>, extra_args: &[String]) -> Result<()> {
     let prompt = build_system_prompt(npc_name, npcs);
     let mut args = vec!["--system-prompt".to_string(), prompt];
     args.extend(extra_args.iter().cloned());

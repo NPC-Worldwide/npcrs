@@ -1,11 +1,11 @@
 
 use crate::r#gen::Message;
 use crate::memory::CommandHistory;
-use crate::npc_compiler::{Npc, Team};
+use crate::npc_compiler::{NPC, Team};
 use crate::error::Result;
 
 pub struct ShellState {
-    pub npc: Npc,
+    pub npc: NPC,
     pub team: Team,
     pub history: CommandHistory,
     pub messages: Vec<Message>,

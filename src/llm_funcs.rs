@@ -2,7 +2,7 @@
 use crate::error::{NpcError, Result};
 #[allow(unused_imports)]
 use crate::r#gen::{LlmResponse, Message, ToolDef, ToolCall};
-use crate::npc_compiler::{Npc, Jinx, JinxInput};
+use crate::npc_compiler::{NPC, Jinx, JinxInput};
 use std::collections::HashMap;
 
 pub struct LlmResponseResult {
@@ -24,7 +24,7 @@ pub struct UsageInfo {
 }
 
 pub fn resolve_model_provider(
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     model: Option<&str>,
     provider: Option<&str>,
 ) -> (String, String) {
@@ -64,7 +64,7 @@ fn lookup_provider(model: &str) -> String {
 
 pub async fn get_llm_response(
     input: &str,
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     model: Option<&str>,
     provider: Option<&str>,
     tools: Option<&[ToolDef]>,
@@ -79,7 +79,7 @@ pub async fn get_llm_response(
 
 pub async fn get_llm_response_ext(
     input: &str,
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     model: Option<&str>,
     provider: Option<&str>,
     tools: Option<&[ToolDef]>,
@@ -209,12 +209,12 @@ pub async fn get_llm_response_ext(
     })
 }
 
-async fn llm_call(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<String> {
+async fn llm_call(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<String> {
     let result = get_llm_response_ext(prompt, npc, model, provider, None, &[], None, None, context, false).await?;
     Ok(result.response.unwrap_or_default())
 }
 
-async fn llm_call_json(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<serde_json::Value> {
+async fn llm_call_json(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<serde_json::Value> {
     let result = get_llm_response_ext(prompt, npc, model, provider, None, &[], None, Some("json"), context, false).await?;
     if let Some(json) = result.response_json {
         Ok(json)
@@ -241,7 +241,7 @@ pub async fn execute_llm_command(
     command: &str,
     model: Option<&str>,
     provider: Option<&str>,
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     messages: &mut Vec<Message>,
 ) -> Result<LlmResponseResult> {
     for _attempt in 0..5 {
@@ -309,7 +309,7 @@ pub async fn handle_request_input(context: &str, model: &str, provider: &str) ->
     llm_call_json(&prompt, Some(model), Some(provider), None, None).await
 }
 
-fn get_jinxes_from_npc<'a>(npc: Option<&'a Npc>, team_jinxes: &'a HashMap<String, Jinx>) -> HashMap<String, &'a Jinx> {
+fn get_jinxes_from_npc<'a>(npc: Option<&'a NPC>, team_jinxes: &'a HashMap<String, Jinx>) -> HashMap<String, &'a Jinx> {
     let mut result = HashMap::new();
     if let Some(npc) = npc {
         for name in &npc.jinx_names {
@@ -354,7 +354,7 @@ pub async fn handle_jinx_call(
     jinxes: &HashMap<String, Jinx>,
     model: Option<&str>,
     provider: Option<&str>,
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     messages: &[Message],
     context: Option<&str>,
     n_attempts: usize,
@@ -532,7 +532,7 @@ pub async fn handle_action_choice(
     jinxes: &HashMap<String, Jinx>,
     model: Option<&str>,
     provider: Option<&str>,
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     messages: &[Message],
     context: Option<&str>,
     last_jinx_output: Option<&str>,
@@ -582,7 +582,7 @@ pub async fn check_llm_command(
     command: &str,
     model: Option<&str>,
     provider: Option<&str>,
-    npc: Option<&Npc>,
+    npc: Option<&NPC>,
     messages: &mut Vec<Message>,
     context: Option<&str>,
     jinxes: &HashMap<String, Jinx>,
@@ -613,17 +613,24 @@ pub async fn check_llm_command(
     let prompt = format!(
         "A user submitted this request: {}\n\n\
         Determine the nature of the user's request:\n\n\
-        1. Should a jinx be invoked to fulfill the request? A jinx is a jinja-template execution script.\n\
-        2. Is it a general question that requires an informative answer?\n\n\
-        Use jinxes when the answer needs to be up-to-date, or the user wants to read/edit a file, \
-        search the web, take a screenshot, run code, or perform an action.\n\n\
-        If a user asks to explain something like the plot of the aeneid, or where mount everest is, \
-        that can be answered without a jinx.\n\n\
+        1. Should a jinx be invoked to fulfill the request? A jinx is a jinja-template execution script.\n\n\
+        2. Is it a general question that requires an informative answer or a highly specific question that\n\
+            requires information on the web?\n\n\
+        Use jinxes when it is obvious that the answer needs to be as up-to-date as possible. For example,\n\
+            a question about where mount everest is does not necessarily need to be answered by a jinx call or an agent pass.\n\n\
+        If a user asks to explain the plot of the aeneid, this can be answered without a jinx call or agent pass.\n\n\
+        If a user were to ask for the current weather in tokyo or the current price of bitcoin or who the mayor of a city is,\n\
+            then a jinx call is appropriate.\n\n\
+        If the user wants you to read a file, it must use a jinx to read the file.\n\n\
+        If the user asks you to edit a file, you must use a jinx to edit the file.\n\n\
+        If the user asks you to take a screenshot, you must use a jinx to take the screenshot if available.\n\n\
+        If a user asks you to search or to take a screenshot or to open a program or to write a program most likely it is\n\
+        appropriate to use a jinx.\n\n\
         Available jinxes:\n{}\n\n\
         Return a JSON array of actions. Each action is either:\n\
         - {{\"action\": \"answer\"}} for a direct answer\n\
         - {{\"action\": \"invoke_jinx\", \"jinx_name\": \"name\"}} to invoke a jinx\n\n\
-        Return only the action sequence as JSON. Do not include leading ```json or other markdown tags.",
+        remember, in your output, return only the action sequence. do not include any leading ```json or other markdown tags.",
         command, jinx_list
     );
 
@@ -706,7 +713,7 @@ pub async fn check_llm_command(
     Ok(r)
 }
 
-pub async fn gen_image(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, width: u32, height: u32, api_key: Option<&str>) -> Result<crate::r#gen::GeneratedImage> {
+pub async fn gen_image(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, width: u32, height: u32, api_key: Option<&str>) -> Result<crate::r#gen::GeneratedImage> {
     let (m, p) = if let (Some(m), Some(p)) = (model, provider) {
         (m.to_string(), p.to_string())
     } else if let Some(npc) = npc {
@@ -718,7 +725,7 @@ pub async fn gen_image(prompt: &str, model: Option<&str>, provider: Option<&str>
     crate::r#gen::generate_image(prompt, &m, &p, api_key, width, height).await
 }
 
-pub async fn gen_video(prompt: &str, model: Option<&str>, provider: Option<&str>, _npc: Option<&Npc>, output_path: &str) -> Result<HashMap<String, String>> {
+pub async fn gen_video(prompt: &str, model: Option<&str>, provider: Option<&str>, _npc: Option<&NPC>, output_path: &str) -> Result<HashMap<String, String>> {
     let model_str = model.unwrap_or("veo-3.1-fast-generate-preview");
     let provider_str = provider.unwrap_or("gemini");
     let mut result = HashMap::new();
@@ -759,7 +766,7 @@ pub async fn gen_video(prompt: &str, model: Option<&str>, provider: Option<&str>
     Ok(result)
 }
 
-pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<HashMap<String, serde_json::Value>> {
+pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<HashMap<String, serde_json::Value>> {
     if messages.is_empty() {
         let mut r = HashMap::new();
         r.insert("output".into(), serde_json::json!({}));
@@ -771,7 +778,8 @@ pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option
         .collect::<Vec<_>>().join("\n");
 
     let prompt = format!(
-        "Read the following conversation:\n\n{}\n\n\
+        "Read the following conversation:\n\n\
+        {}\n\n\
         Now identify the following items:\n\n\
         1. The high level objective\n\
         2. The most recent task\n\
@@ -782,7 +790,7 @@ pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option
             \"high_level_objective\": \"the overall goal so far for the user\",\n\
             \"most_recent_task\": \"The currently ongoing task\",\n\
             \"accomplishments\": [\"accomplishment1\", \"accomplishment2\"],\n\
-            \"failures\": [\"failure1\", \"failure2\"]\n\
+            \"failures\": [\"falures1\", \"failures2\"]\n\
         }}",
         conversation_text
     );
@@ -804,7 +812,7 @@ pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option
 }
 
 #[async_recursion::async_recursion(?Send)]
-pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
+pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
     let prompt = format!(
         "Extract facts from this text. A fact is a specific statement that can be sourced from the text.\n\n\
         Example: if text says \"the moon is the earth's only currently known satellite\", extract:\n\
@@ -812,14 +820,67 @@ pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option
         - \"The moon is the only current satellite of earth\"\n\
         - \"There may have been other satellites of earth\" (inferred from \"only currently known\")\n\n\
         A fact is a piece of information that makes a statement about the world.\n\
-        Facts may be simple or complex. They can also be conflicting with each other.\n\n\
+        A fact is typically a sentence that is true or false.\n\
+        Facts may be simple or complex. They can also be conflicting with each other, usually\n\
+        because there is some hidden context that is not mentioned in the text.\n\
+        In any case, it is simply your job to extract a list of facts that could pertain to\n\
+        an individual's personality.\n\n\
+        For example, if a message says:\n\
+            \"since I am a doctor I am often trying to think up new ways to help people.\n\
+            Can you help me set up a new kind of software to help with that?\"\n\
+        You might extract the following facts:\n\
+            - The individual is a doctor\n\
+            - They are helpful\n\n\
+        Another example:\n\
+            \"I am a software engineer who loves to play video games. I am also a huge fan of the\n\
+            Star Wars franchise and I am a member of the 501st Legion.\"\n\
+        You might extract the following facts:\n\
+            - The individual is a software engineer\n\
+            - The individual loves to play video games\n\
+            - The individual is a huge fan of the Star Wars franchise\n\
+            - The individual is a member of the 501st Legion\n\n\
+        Another example:\n\
+            \"The quantum tunneling effect allows particles to pass through barriers\n\
+            that classical physics says they shouldn't be able to cross. This has\n\
+            huge implications for semiconductor design.\"\n\
+        You might extract these facts:\n\
+            - Quantum tunneling enables particles to pass through barriers that are\n\
+              impassable according to classical physics\n\
+            - The behavior of quantum tunneling has significant implications for\n\
+              how semiconductors must be designed\n\n\
+        Another example:\n\
+            \"People used to think the Earth was flat. Now we know it's spherical,\n\
+            though technically it's an oblate spheroid due to its rotation.\"\n\
+        You might extract these facts:\n\
+            - People historically believed the Earth was flat\n\
+            - It is now known that the Earth is an oblate spheroid\n\
+            - The Earth's oblate spheroid shape is caused by its rotation\n\n\
+        Another example:\n\
+            \"My research on black holes suggests they emit radiation, but my professor\n\
+            says this conflicts with Einstein's work. After reading more papers, I\n\
+            learned this is actually Hawking radiation and doesn't conflict at all.\"\n\
+        You might extract the following facts:\n\
+            - Black holes emit radiation\n\
+            - The professor believes this radiation conflicts with Einstein's work\n\
+            - The radiation from black holes is called Hawking radiation\n\
+            - Hawking radiation does not conflict with Einstein's work\n\n\
+        Another example:\n\
+            \"During the pandemic, many developers switched to remote work. I found\n\
+            that I'm actually more productive at home, though my company initially\n\
+            thought productivity would drop. Now they're keeping remote work permanent.\"\n\
+        You might extract the following facts:\n\
+            - The pandemic caused many developers to switch to remote work\n\
+            - The individual discovered higher productivity when working from home\n\
+            - The company predicted productivity would decrease with remote work\n\
+            - The company decided to make remote work a permanent option\n\n\
+        Thus, it is your mission to reliably extract lists of facts.\n\n\
         Here is the text:\n\
         Text: \"{}\"\n\n\
-        Facts should never be more than one or two sentences. They must be explicitly \
-        derived or inferred from the source text. Do not simply repeat the source text verbatim.\n\n\
-        No two facts should share substantially similar claims. They should be conceptually distinct.\n\
+        Facts should never be more than one or two sentences, and they should not be overly complex or literal. They must be explicitly\n\
+        derived or inferred from the source text. Do not simply repeat the source text verbatim when stating the fact.\n\n\
+        No two facts should share substantially similar claims. They should be conceptually distinct and pertain to distinct ideas, avoiding lengthy convoluted or compound facts.\n\
         Respond with JSON:\n\
-        {{\"facts\": [{{\"statement\": \"fact statement\", \"source_text\": \"relevant source text\", \"type\": \"explicit or inferred\"}}]}}",
+        {{\"facts\": [{{\"statement\": \"fact statement that builds on input text to state a specific claim that can be falsified through reference to the source material\", \"source_text\": \"text snippets related to the source text\", \"type\": \"explicit or inferred\"}}]}}",
         content_text
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
@@ -833,7 +894,7 @@ pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option
 }
 
 #[async_recursion::async_recursion(?Send)]
-pub async fn zoom_in(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
+pub async fn zoom_in(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
     let valid_facts: Vec<&serde_json::Value> = facts.iter()
         .filter(|f| f.get("statement").and_then(|s| s.as_str()).is_some())
         .collect();
@@ -868,7 +929,7 @@ pub async fn zoom_in(facts: &[serde_json::Value], model: Option<&str>, provider:
     Ok(implied)
 }
 
-pub async fn identify_groups(facts: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn identify_groups(facts: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
     let prompt = format!(
         "What are the main groups these facts could be organized into?\n\
         Express these groups in plain, natural language.\n\n\
@@ -894,7 +955,7 @@ pub async fn identify_groups(facts: &[String], model: Option<&str>, provider: Op
         .unwrap_or_default())
 }
 
-pub async fn get_related_concepts_multi(node_name: &str, node_type: &str, all_concept_names: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn get_related_concepts_multi(node_name: &str, node_type: &str, all_concept_names: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
     let prompt = format!(
         "Which of the following concepts from the entire ontology relate to the given {}?\n\
         Select all that apply, from the most specific to the most abstract.\n\n\
@@ -910,14 +971,17 @@ pub async fn get_related_concepts_multi(node_name: &str, node_type: &str, all_co
         .unwrap_or_default())
 }
 
-pub async fn assign_groups_to_fact(fact: &str, groups: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn assign_groups_to_fact(fact: &str, groups: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
     let prompt = format!(
-        "Given this fact, assign it to any relevant groups.\n\
+        "Given this fact, assign it to any relevant groups.\n\n\
         A fact can belong to multiple groups if it fits.\n\n\
         Here is the fact: {}\n\n\
         Here are the groups: {:?}\n\n\
-        Return a JSON object: {{\"groups\": [\"list of group names\"]}}\n\
-        Do not include any additional markdown formatting.",
+        Return a JSON object with the following structure:\n\
+        {{\n\
+            \"groups\": [\"list of group names\"]\n\
+        }}\n\n\
+        Do not include any additional markdown formatting or leading json characters.",
         fact, groups
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
@@ -926,7 +990,7 @@ pub async fn assign_groups_to_fact(fact: &str, groups: &[String], model: Option<
         .unwrap_or_default())
 }
 
-pub async fn generate_group_candidates(items: &[String], item_type: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, n_passes: usize, subset_size: usize) -> Result<Vec<String>> {
+pub async fn generate_group_candidates(items: &[String], item_type: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, n_passes: usize, subset_size: usize) -> Result<Vec<String>> {
     let mut all_candidates: Vec<String> = Vec::new();
 
     for _pass in 0..n_passes {
@@ -936,18 +1000,26 @@ pub async fn generate_group_candidates(items: &[String], item_type: &str, model:
             items.iter().collect()
         };
 
+        let items_json = serde_json::to_string(&item_subset).unwrap_or_default();
         let prompt = format!(
-            "From the following {}, identify specific and relevant conceptual groups.\n\
+            "From the following {item_type}, identify specific and relevant conceptual groups.\n\
             Think about the core subject or entity being discussed.\n\n\
             GUIDELINES FOR GROUP NAMES:\n\
-            1. Prioritize Specificity: Names should be precise and directly reflect the content.\n\
-            2. Favor Nouns and Noun Phrases.\n\
-            3. AVOID: Gerunds, overly generic terms (\"Concepts\", \"Processes\", \"Dynamics\").\n\
-            4. Direct Naming: specific entities can be group names themselves.\n\n\
-            {}: {:?}\n\n\
+            1.  **Prioritize Specificity:** Names should be precise and directly reflect the content.\n\
+            2.  **Favor Nouns and Noun Phrases:** Use descriptive nouns or noun phrases.\n\
+            3.  **AVOID:**\n\
+                *   Gerunds (words ending in -ing when used as nouns, like \"Understanding\", \"Analyzing\", \"Processing\"). If a gerund is unavoidable, try to make it a specific action (e.g., \"User Authentication Module\" is better than \"Authenticating Users\").\n\
+                *   Adverbs or descriptive adjectives that don't form a core part of the subject's identity (e.g., \"Quickly calculating\", \"Effectively managing\").\n\
+                *   Overly generic terms (e.g., \"Concepts\", \"Processes\", \"Dynamics\", \"Mechanics\", \"Analysis\", \"Understanding\", \"Interactions\", \"Relationships\", \"Properties\", \"Structures\", \"Systems\", \"Frameworks\", \"Predictions\", \"Outcomes\", \"Effects\", \"Considerations\", \"Methods\", \"Techniques\", \"Data\", \"Theoretical\", \"Physical\", \"Spatial\", \"Temporal\").\n\
+            4.  **Direct Naming:** If an item is a specific entity or action, it can be a group name itself (e.g., \"Earth\", \"Lamb Shank Braising\", \"World War I\").\n\n\
+            EXAMPLE:\n\
+            Input {item_type}: [\"Self-intersection shocks drive accretion disk formation.\", \"Gravity stretches star into stream.\", \"Energy dissipation in shocks influences capture fraction.\"]\n\
+            Desired Output Groups: [\"Accretion Disk Formation (Self-Intersection Shocks)\", \"Stellar Tidal Stretching\", \"Energy Dissipation from Shocks\"]\n\n\
+            ---\n\n\
+            Now, analyze the following {item_type}:\n\
+            {item_type}: {items_json}\n\n\
             Return a JSON object:\n\
-            {{\"groups\": [\"list of specific group names\"]}}",
-            item_type, item_type, item_subset
+            {{\"groups\": [\"list of specific, precise, and relevant group names\"]}}",
         );
         if let Ok(result) = llm_call_json(&prompt, model, provider, npc, context).await {
             if let Some(groups) = result.get("groups").and_then(|g| g.as_array()) {
@@ -964,19 +1036,36 @@ pub async fn generate_group_candidates(items: &[String], item_type: &str, model:
     Ok(all_candidates)
 }
 
-pub async fn remove_idempotent_groups(group_candidates: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn remove_idempotent_groups(group_candidates: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
+    let groups_json = serde_json::to_string(group_candidates).unwrap_or_default();
     let prompt = format!(
         "Compare these group names. Identify and list ONLY the groups that are conceptually distinct and specific.\n\n\
-        GUIDELINES:\n\
-        1. Prioritize Specificity and Direct Naming.\n\
-        2. Prefer Concrete Entities/Actions.\n\
-        3. Rephrase Gerunds to noun phrases.\n\
-        4. AVOID overly generic terms.\n\
-        5. If two groups are very similar, keep the more descriptive one.\n\n\
-        Groups: {:?}\n\n\
+        GUIDELINES FOR SELECTING DISTINCT GROUPS:\n\
+        1.  **Prioritize Specificity and Direct Naming:** Favor precise nouns or noun phrases that directly name the subject.\n\
+        2.  **Prefer Concrete Entities/Actions:** If a name refers to a specific entity or action (e.g., \"Earth\", \"Sun\", \"Water\", \"France\", \"User Authentication Module\", \"Lamb Shank Braising\", \"World War I\"), keep it if it's distinct.\n\
+        3.  **Rephrase Gerunds:** If a name uses a gerund (e.g., \"Understanding TDEs\"), rephrase it to a noun or noun phrase (e.g., \"Tidal Disruption Events\").\n\
+        4.  **AVOID OVERLY GENERIC TERMS:** Do NOT use very broad or abstract terms that don't add specific meaning. Examples to avoid: \"Concepts\", \"Processes\", \"Dynamics\", \"Mechanics\", \"Analysis\", \"Understanding\", \"Interactions\", \"Relationships\", \"Properties\", \"Structures\", \"Systems\", \"Frameworks\", \"Predictions\", \"Outcomes\", \"Effects\", \"Considerations\", \"Methods\", \"Techniques\", \"Data\", \"Theoretical\", \"Physical\", \"Spatial\", \"Temporal\". If a group name seems overly generic or abstract, it should likely be removed or refined.\n\
+        5.  **Similarity Check:** If two groups are very similar, keep the one that is more descriptive or specific to the domain.\n\n\
+        EXAMPLE 1:\n\
+        Groups: [\"Accretion Disk Formation\", \"Accretion Disk Dynamics\", \"Formation of Accretion Disks\"]\n\
+        Distinct Groups: [\"Accretion Disk Formation\", \"Accretion Disk Dynamics\"]\n\n\
+        EXAMPLE 2:\n\
+        Groups: [\"Causes of Events\", \"Event Mechanisms\", \"Event Drivers\"]\n\
+        Distinct Groups: [\"Event Causation\", \"Event Mechanisms\"]\n\n\
+        EXAMPLE 3:\n\
+        Groups: [\"Astrophysics Basics\", \"Fundamental Physics\", \"General Science Concepts\"]\n\
+        Distinct Groups: [\"Fundamental Physics\"]\n\n\
+        EXAMPLE 4:\n\
+        Groups: [\"Earth\", \"The Planet Earth\", \"Sun\", \"Our Star\"]\n\
+        Distinct Groups: [\"Earth\", \"Sun\"]\n\n\
+        EXAMPLE 5:\n\
+        Groups: [\"User Authentication Module\", \"Authentication System\", \"Login Process\"]\n\
+        Distinct Groups: [\"User Authentication Module\", \"Login Process\"]\n\n\
+        ---\n\n\
+        Now, analyze the following groups:\n\
+        Groups: {groups_json}\n\n\
         Return JSON:\n\
-        {{\"distinct_groups\": [\"list of distinct group names to keep\"]}}",
-        group_candidates
+        {{\"distinct_groups\": [\"list of specific, precise, and distinct group names to keep\"]}}",
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
     Ok(result.get("distinct_groups").and_then(|g| g.as_array())
@@ -984,7 +1073,7 @@ pub async fn remove_idempotent_groups(group_candidates: &[String], model: Option
         .unwrap_or_default())
 }
 
-pub async fn generate_groups(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
+pub async fn generate_groups(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let facts_text: String = facts.iter()
         .filter_map(|f| f.get("statement").and_then(|s| s.as_str()))
         .map(|s| format!("- {}", s))
@@ -993,9 +1082,10 @@ pub async fn generate_groups(facts: &[serde_json::Value], model: Option<&str>, p
     let prompt = format!(
         "Generate conceptual groups for this group of facts:\n\n\
         {}\n\n\
-        Create categories that encompass multiple related facts, but do not unnecessarily combine facts with conjunctions.\n\
-        Your aim is to generalize commonly occurring ideas into groups.\n\
-        Group names should never be more than two words. No gerunds. No conjunctions.\n\
+        Create categories that encompass multiple related facts, but do not unnecessarily combine facts with conjunctions.\n\n\
+        Your aim is to generalize commonly occurring ideas into groups, not to just arbitrarily generate associations.\n\
+        Focus on the key commonly occurring items and expressions.\n\n\
+        Group names should never be more than two words. They should not contain gerunds. They should never contain conjunctions like \"AND\" or \"OR\".\n\
         Respond with JSON:\n\
         {{\"groups\": [{{\"name\": \"group name\"}}]}}",
         facts_text
@@ -1004,7 +1094,7 @@ pub async fn generate_groups(facts: &[serde_json::Value], model: Option<&str>, p
     Ok(result.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default())
 }
 
-pub async fn r#abstract(groups: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
+pub async fn r#abstract(groups: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let groups_text: String = groups.iter()
         .filter_map(|g| g.get("name").and_then(|n| n.as_str()))
         .map(|n| format!("- \"{}\"", n))
@@ -1013,11 +1103,12 @@ pub async fn r#abstract(groups: &[serde_json::Value], model: Option<&str>, provi
     let prompt = format!(
         "Create more abstract categories from this list of groups.\n\n\
         Groups:\n{}\n\n\
-        You will create higher-level concepts that interrelate between the given groups.\n\
-        Create abstract categories that encompass multiple related facts, but do not \
-        unnecessarily combine facts with conjunctions.\n\
+        You will create higher-level concepts that interrelate between the given groups.\n\n\
+        Create abstract categories that encompass multiple related facts, but do not unnecessarily combine facts with conjunctions. For example, do not try to combine \"characters\", \"settings\", and \"physical reactions\" into a\n\
+        compound group like \"Characters, Setting, and Physical Reactions\". This kind of grouping is not productive and only obfuscates true abstractions.\n\
+        For example, a group that might encompass the three aforementioned names might be \"Literary Themes\" or \"Video Editing Functions\", depending on the context.\n\
         Your aim is to abstract, not to just arbitrarily generate associations.\n\n\
-        Group names should never be more than two words. No gerunds. No conjunctions.\n\
+        Group names should never be more than two words. They should not contain gerunds. They should never contain conjunctions like \"AND\" or \"OR\".\n\
         Generate no more than 5 new concepts and no fewer than 2.\n\n\
         Respond with JSON:\n\
         {{\"groups\": [{{\"name\": \"abstract category name\"}}]}}",
@@ -1027,7 +1118,7 @@ pub async fn r#abstract(groups: &[serde_json::Value], model: Option<&str>, provi
     Ok(result.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default())
 }
 
-pub async fn remove_redundant_groups(groups: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
+pub async fn remove_redundant_groups(groups: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let groups_text: String = groups.iter()
         .filter_map(|g| g.get("name").and_then(|n| n.as_str()))
         .map(|n| format!("- {}", n))
@@ -1037,8 +1128,11 @@ pub async fn remove_redundant_groups(groups: &[serde_json::Value], model: Option
         "Remove redundant groups from this list:\n\n\
         {}\n\n\
         Merge similar groups and keep only distinct concepts.\n\
-        Your aim is to abstract, not to just arbitrarily generate associations.\n\
-        Group names should never be more than two words. No gerunds. No conjunctions.\n\n\
+        Create abstract categories that encompass multiple related facts, but do not unnecessarily combine facts with conjunctions. For example, do not try to combine \"characters\", \"settings\", and \"physical reactions\" into a\n\
+        compound group like \"Characters, Setting, and Physical Reactions\". This kind of grouping is not productive and only obfuscates true abstractions.\n\
+        For example, a group that might encompass the three aforementioned names might be \"Literary Themes\" or \"Video Editing Functions\", depending on the context.\n\
+        Your aim is to abstract, not to just arbitrarily generate associations.\n\n\
+        Group names should never be more than two words. They should not contain gerunds. They should never contain conjunctions like \"AND\" or \"OR\".\n\n\
         Respond with JSON:\n\
         {{\"groups\": [{{\"name\": \"final group name\"}}]}}",
         groups_text
@@ -1047,7 +1141,7 @@ pub async fn remove_redundant_groups(groups: &[serde_json::Value], model: Option
     Ok(result.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default())
 }
 
-pub async fn prune_fact_subset_llm(fact_subset: &[serde_json::Value], concept_name: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
+pub async fn prune_fact_subset_llm(fact_subset: &[serde_json::Value], concept_name: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
     let facts_json = serde_json::to_string_pretty(fact_subset).unwrap_or_default();
     let prompt = format!(
         "The following facts are all related to the concept \"{}\".\n\
@@ -1062,27 +1156,29 @@ pub async fn prune_fact_subset_llm(fact_subset: &[serde_json::Value], concept_na
     Ok(result.get("refined_facts").and_then(|f| f.as_array()).cloned().unwrap_or_default())
 }
 
-pub async fn consolidate_facts_llm(new_fact: &serde_json::Value, existing_facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<serde_json::Value> {
+pub async fn consolidate_facts_llm(new_fact: &serde_json::Value, existing_facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<serde_json::Value> {
     let new_stmt = new_fact.get("statement").and_then(|s| s.as_str()).unwrap_or("");
     let existing: Vec<&str> = existing_facts.iter()
         .filter_map(|f| f.get("statement").and_then(|s| s.as_str())).collect();
     let prompt = format!(
         "Analyze the \"New Fact\" in the context of the \"Existing Facts\" list.\n\
-        Determine if the new fact provides genuinely new information or is a repeat.\n\n\
-        New Fact: \"{}\"\n\n\
-        Existing Facts:\n{}\n\n\
+        Your task is to determine if the new fact provides genuinely new information or if it is essentially a repeat or minor rephrasing of information already present.\n\n\
+        New Fact:\n\
+        \"{}\"\n\n\
+        Existing Facts:\n\
+        {}\n\n\
         Possible decisions:\n\
-        - 'novel': The fact introduces new, distinct information.\n\
-        - 'redundant': The fact repeats information already present.\n\n\
-        Respond with JSON:\n\
-        {{\"decision\": \"novel or redundant\", \"reason\": \"A brief explanation.\"}}",
+        - 'novel': The fact introduces new, distinct information not covered by the existing facts.\n\
+        - 'redundant': The fact repeats information already present in the existing facts.\n\n\
+        Respond with a JSON object:\n\
+        {{\"decision\": \"novel or redundant\", \"reason\": \"A brief explanation for your decision.\"}}",
         new_stmt, serde_json::to_string_pretty(&existing).unwrap_or_default()
     );
     llm_call_json(&prompt, model, provider, npc, context).await
 }
 
 #[async_recursion::async_recursion(?Send)]
-pub async fn get_related_facts_llm(new_fact_statement: &str, existing_fact_statements: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<String>> {
+pub async fn get_related_facts_llm(new_fact_statement: &str, existing_fact_statements: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<String>> {
     let prompt = format!(
         "A new fact has been learned: \"{}\"\n\n\
         Which of the following existing facts are directly related to it \
@@ -1105,7 +1201,7 @@ pub async fn get_related_facts_llm(new_fact_statement: &str, existing_fact_state
     Ok(related)
 }
 
-pub async fn find_best_link_concept_llm(candidate_concept_name: &str, existing_concept_names: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Option<String>> {
+pub async fn find_best_link_concept_llm(candidate_concept_name: &str, existing_concept_names: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Option<String>> {
     let prompt = format!(
         "Here is a new candidate concept: \"{}\"\n\n\
         Which of the following existing concepts is it most closely related to?\n\
@@ -1120,7 +1216,7 @@ pub async fn find_best_link_concept_llm(candidate_concept_name: &str, existing_c
         .map(String::from).filter(|v| v.to_lowercase() != "none"))
 }
 
-pub async fn asymptotic_freedom(parent_concept_name: &str, supporting_facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn asymptotic_freedom(parent_concept_name: &str, supporting_facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
     let fact_statements: Vec<&str> = supporting_facts.iter()
         .filter_map(|f| f.get("statement").and_then(|s| s.as_str())).collect();
     let prompt = format!(
@@ -1139,7 +1235,7 @@ pub async fn asymptotic_freedom(parent_concept_name: &str, supporting_facts: &[s
         .unwrap_or_default())
 }
 
-pub async fn bootstrap(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, n_samples: usize, context: Option<&str>) -> Result<String> {
+pub async fn bootstrap(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, n_samples: usize, context: Option<&str>) -> Result<String> {
     let mut results = Vec::new();
     for i in 0..n_samples {
         results.push(llm_call(
@@ -1153,7 +1249,7 @@ pub async fn bootstrap(prompt: &str, model: Option<&str>, provider: Option<&str>
     synthesize(&combined, model, provider, npc, context).await
 }
 
-pub async fn harmonize(prompt: &str, items: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, harmony_rules: Option<&[String]>, context: Option<&str>) -> Result<String> {
+pub async fn harmonize(prompt: &str, items: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, harmony_rules: Option<&[String]>, context: Option<&str>) -> Result<String> {
     let items_text = items.iter().enumerate()
         .map(|(i, s)| format!("{}. {}", i + 1, s)).collect::<Vec<_>>().join("\n");
     let rules = harmony_rules.map(|r| r.join(", ")).unwrap_or_else(|| "maintain_consistency".into());
@@ -1163,7 +1259,7 @@ pub async fn harmonize(prompt: &str, items: &[String], model: Option<&str>, prov
     ).await
 }
 
-pub async fn orchestrate(prompt: &str, items: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, workflow: &str, context: Option<&str>) -> Result<String> {
+pub async fn orchestrate(prompt: &str, items: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, workflow: &str, context: Option<&str>) -> Result<String> {
     let items_text = items.iter().enumerate()
         .map(|(i, s)| format!("{}. {}", i + 1, s)).collect::<Vec<_>>().join("\n");
     llm_call(
@@ -1172,7 +1268,7 @@ pub async fn orchestrate(prompt: &str, items: &[String], model: Option<&str>, pr
     ).await
 }
 
-pub async fn spread_and_sync(prompt: &str, variations: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, sync_strategy: &str, context: Option<&str>) -> Result<String> {
+pub async fn spread_and_sync(prompt: &str, variations: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, sync_strategy: &str, context: Option<&str>) -> Result<String> {
     let mut results = Vec::new();
     for v in variations {
         results.push(llm_call(
@@ -1189,7 +1285,7 @@ pub async fn spread_and_sync(prompt: &str, variations: &[String], model: Option<
     ).await
 }
 
-pub async fn criticize(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<String> {
+pub async fn criticize(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<String> {
     llm_call(
         &format!(
             "Provide a critical analysis and constructive criticism of the following:\n{}\n\n\
@@ -1201,7 +1297,7 @@ pub async fn criticize(prompt: &str, model: Option<&str>, provider: Option<&str>
     ).await
 }
 
-pub async fn synthesize(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>) -> Result<String> {
+pub async fn synthesize(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<String> {
     llm_call(
         &format!(
             "Synthesize this content:\n{}\n\n\

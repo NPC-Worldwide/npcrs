@@ -4,7 +4,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::memory::CommandHistory;
-use crate::npc_compiler::Npc;
+use crate::npc_compiler::NPC;
 use crate::shell::{ShellMode, ShellState};
 use crate::npc_compiler::Team;
 
@@ -85,9 +85,9 @@ pub extern "C" fn npcrs_team_context(team: *const Team) -> *mut c_char {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn npcrs_npc_load(path: *const c_char) -> *mut Npc {
+pub extern "C" fn npcrs_npc_load(path: *const c_char) -> *mut NPC {
     let path = unsafe { from_c_str(path) };
-    match Npc::from_file(&path) {
+    match NPC::from_file(&path) {
         Ok(npc) => Box::into_raw(Box::new(npc)),
         Err(e) => {
             eprintln!("npcrs_npc_load error: {}", e);
@@ -97,7 +97,7 @@ pub extern "C" fn npcrs_npc_load(path: *const c_char) -> *mut Npc {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn npcrs_npc_free(npc: *mut Npc) {
+pub extern "C" fn npcrs_npc_free(npc: *mut NPC) {
     if !npc.is_null() {
         unsafe {
             drop(Box::from_raw(npc));
@@ -106,7 +106,7 @@ pub extern "C" fn npcrs_npc_free(npc: *mut Npc) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn npcrs_npc_name(npc: *const Npc) -> *mut c_char {
+pub extern "C" fn npcrs_npc_name(npc: *const NPC) -> *mut c_char {
     if npc.is_null() {
         return to_c_string("");
     }
@@ -115,7 +115,7 @@ pub extern "C" fn npcrs_npc_name(npc: *const Npc) -> *mut c_char {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn npcrs_npc_system_prompt(
-    npc: *const Npc,
+    npc: *const NPC,
     team_context: *const c_char,
 ) -> *mut c_char {
     if npc.is_null() {
@@ -132,7 +132,7 @@ pub extern "C" fn npcrs_npc_system_prompt(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn npcrs_npc_to_json(npc: *const Npc) -> *mut c_char {
+pub extern "C" fn npcrs_npc_to_json(npc: *const NPC) -> *mut c_char {
     if npc.is_null() {
         return to_c_string("{}");
     }
@@ -163,7 +163,7 @@ pub extern "C" fn npcrs_shell_create(
     let npc = team
         .lead_npc()
         .cloned()
-        .unwrap_or_else(|| Npc::new("assistant", "You are a helpful assistant."));
+        .unwrap_or_else(|| NPC::new("assistant", "You are a helpful assistant."));
 
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())

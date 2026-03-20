@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Npc {
+pub struct NPC {
     pub name: String,
 
     #[serde(default)]
@@ -44,17 +44,89 @@ pub struct Npc {
     #[serde(default)]
     pub use_global_jinxes: bool,
 
+    #[serde(default)]
+    pub plain_system_message: bool,
+
+    #[serde(default)]
+    pub language: Option<String>,
+
+    #[serde(default)]
+    pub auto_execute: bool,
+
+    #[serde(default)]
+    pub databases: Vec<String>,
+
+    #[serde(default)]
+    pub file_context: Vec<String>,
+
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+
     #[serde(skip)]
     pub memory: Option<String>,
+
+    #[serde(skip)]
+    pub memory_length: usize,
+
+    #[serde(skip)]
+    pub memory_strategy: String,
 
     #[serde(skip)]
     pub shared_context: HashMap<String, serde_json::Value>,
 
     #[serde(skip)]
     pub source_path: Option<String>,
+
+    #[serde(skip)]
+    pub npc_directory: Option<String>,
+
+    #[serde(skip)]
+    pub jinxes_directory: Option<String>,
+
+    #[serde(skip)]
+    pub jinxes_dict: HashMap<String, Jinx>,
+
+    #[serde(skip)]
+    pub jinx_tool_catalog: HashMap<String, serde_json::Value>,
+
+    #[serde(skip)]
+    pub tools: Vec<serde_json::Value>,
+
+    #[serde(skip)]
+    pub tool_map: HashMap<String, String>,
+
+    #[serde(skip)]
+    pub kg_data: Option<serde_json::Value>,
+
+    #[serde(skip)]
+    pub team: Option<Box<Team>>,
+
+    #[serde(skip)]
+    pub tables: Option<Vec<String>>,
+
+    #[serde(skip)]
+    pub command_history_path: Option<String>,
+
+    #[serde(skip)]
+    pub db_conn: Option<String>,
+
+    #[serde(skip)]
+    pub db_type: Option<String>,
+
+    #[serde(skip)]
+    pub jinxes_spec: Vec<String>,
+
+    #[serde(skip)]
+    pub npc_path: Option<String>,
+
+    #[serde(skip)]
+    pub npc_jinxes_directory: Option<String>,
+
+    #[serde(skip)]
+    pub tools_schema: Vec<serde_json::Value>,
 }
 
-impl Default for Npc {
+impl Default for NPC {
     fn default() -> Self {
         Self {
             name: "assistant".to_string(),
@@ -68,9 +140,33 @@ impl Default for Npc {
             jinx_names: Vec::new(),
             mcp_servers: Vec::new(),
             use_global_jinxes: false,
+            plain_system_message: false,
+            language: None,
+            auto_execute: false,
+            databases: Vec::new(),
+            file_context: Vec::new(),
+            env: HashMap::new(),
             memory: None,
+            memory_length: 20,
+            memory_strategy: "recent".to_string(),
             shared_context: HashMap::new(),
             source_path: None,
+            npc_directory: None,
+            jinxes_directory: None,
+            jinxes_dict: HashMap::new(),
+            jinx_tool_catalog: HashMap::new(),
+            tools: Vec::new(),
+            tool_map: HashMap::new(),
+            kg_data: None,
+            team: None,
+            tables: None,
+            command_history_path: None,
+            db_conn: None,
+            db_type: None,
+            jinxes_spec: Vec::new(),
+            npc_path: None,
+            npc_jinxes_directory: None,
+            tools_schema: Vec::new(),
         }
     }
 }
@@ -131,7 +227,7 @@ pub enum ToolExecutor {
     Python(String),
 }
 
-impl Npc {
+impl NPC {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         load_npc_from_file(path)
     }
@@ -451,9 +547,181 @@ impl Npc {
         if memories.is_empty() { return None; }
         Some(memories.iter().map(|m| format!("- {}", m)).collect::<Vec<_>>().join("\n"))
     }
+
+    pub async fn query_database(&self, sql_query: &str) -> Result<String> {
+        let db_path = self.db_conn.as_deref().unwrap_or("");
+        if db_path.is_empty() { return Err(NpcError::Shell("No database connection configured".into())); }
+        let conn = rusqlite::Connection::open(db_path)?;
+        let mut stmt = conn.prepare(sql_query)?;
+        let col_count = stmt.column_count();
+        let col_names: Vec<String> = (0..col_count).map(|i| stmt.column_name(i).unwrap_or("?").to_string()).collect();
+        let mut rows_out = Vec::new();
+        let mut rows = stmt.query(rusqlite::params![])?;
+        while let Some(row) = rows.next()? {
+            let vals: Vec<String> = (0..col_count).map(|i| row.get::<_, String>(i).unwrap_or_default()).collect();
+            rows_out.push(vals.join("\t"));
+        }
+        Ok(format!("{}\n{}", col_names.join("\t"), rows_out.join("\n")))
+    }
+
+    pub fn archive_old_memories(&self, days_old: i64) -> Result<i64> {
+        let db_path = crate::npc_sysenv::get_history_db_path();
+        let conn = rusqlite::Connection::open(&db_path)?;
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days_old)).to_rfc3339();
+        let count = conn.execute(
+            "UPDATE memory_lifecycle SET status = 'archived' WHERE npc = ?1 AND status = 'approved' AND created_at < ?2",
+            rusqlite::params![self.name, cutoff],
+        )?;
+        Ok(count as i64)
+    }
+
+    pub fn update_memory_by_id(&self, memory_id: i64, new_content: Option<&str>, status: Option<&str>) -> Result<bool> {
+        let db_path = crate::npc_sysenv::get_history_db_path();
+        let conn = rusqlite::Connection::open(&db_path)?;
+        if let Some(content) = new_content {
+            conn.execute("UPDATE memory_lifecycle SET final_memory = ?1 WHERE id = ?2 AND npc = ?3", rusqlite::params![content, memory_id, self.name])?;
+        }
+        if let Some(s) = status {
+            conn.execute("UPDATE memory_lifecycle SET status = ?1 WHERE id = ?2 AND npc = ?3", rusqlite::params![s, memory_id, self.name])?;
+        }
+        Ok(true)
+    }
+
+    pub fn create_planning_state(&self, goal: &str) -> HashMap<String, serde_json::Value> {
+        let mut state = HashMap::new();
+        state.insert("goal".into(), serde_json::json!(goal));
+        state.insert("todos".into(), serde_json::json!([]));
+        state.insert("completed".into(), serde_json::json!([]));
+        state.insert("context".into(), serde_json::json!(""));
+        state
+    }
+
+    pub async fn generate_todos(&self, user_goal: &str, planning_state: &HashMap<String, serde_json::Value>, additional_context: &str) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let prompt = format!(
+            "You are a high-level project planner. Structure tasks logically:\n\
+            1. Understand current state\n\
+            2. Make required changes\n\
+            3. Verify changes work\n\n\
+            User goal: {}\n\
+            {}\n\n\
+            Generate 3-5 todos to accomplish this goal. Use specific actionable language.\n\
+            Each todo should be independent where possible and focused on a single component.\n\n\
+            Return JSON:\n\
+            {{\n\
+                \"todos\": [\n\
+                    {{\"description\": \"todo description\", \"estimated_complexity\": \"simple|medium|complex\"}},\n\
+                    ...\n\
+                ]\n\
+            }}",
+            user_goal, additional_context
+        );
+        let result = crate::llm_funcs::get_llm_response_ext(&prompt, Some(self), None, None, None, &[], None, Some("json"), None, false).await?;
+        Ok(result.response_json.and_then(|j| j.get("todos").and_then(|t| t.as_array()).map(|a| {
+            a.iter().map(|v| {
+                let mut m = HashMap::new();
+                m.insert("description".into(), v.get("description").cloned().unwrap_or(serde_json::json!("")));
+                m.insert("estimated_complexity".into(), v.get("estimated_complexity").cloned().unwrap_or(serde_json::json!("medium")));
+                m
+            }).collect()
+        })).unwrap_or_default())
+    }
+
+    pub async fn should_break_down_todo(&self, todo: &HashMap<String, serde_json::Value>) -> Result<bool> {
+        let description = todo.get("description").and_then(|t| t.as_str()).unwrap_or("");
+        let complexity = todo.get("estimated_complexity").and_then(|t| t.as_str()).unwrap_or("unknown");
+        let prompt = format!(
+            "Todo: {}\n\
+            Complexity: {}\n\n\
+            Should this be broken into smaller steps? Consider:\n\
+            - Is it complex enough to warrant breakdown?\n\
+            - Would breakdown make execution clearer?\n\
+            - Are there multiple distinct steps?\n\n\
+            Return JSON: {{\"should_break_down\": true/false, \"reason\": \"explanation\"}}",
+            description, complexity
+        );
+        let result = crate::llm_funcs::get_llm_response_ext(&prompt, Some(self), None, None, None, &[], None, Some("json"), None, false).await?;
+        Ok(result.response_json.and_then(|j| j.get("should_break_down").and_then(|v| v.as_bool())).unwrap_or(false))
+    }
+
+    pub async fn generate_subtodos(&self, todo: &HashMap<String, serde_json::Value>) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let description = todo.get("description").and_then(|t| t.as_str()).unwrap_or("");
+        let prompt = format!(
+            "Parent todo: {}\n\n\
+            Break this into atomic, executable subtodos. Each should be:\n\
+            - A single, concrete action\n\
+            - Executable in one step\n\
+            - Clear and unambiguous\n\n\
+            Return JSON:\n\
+            {{\n\
+                \"subtodos\": [\n\
+                    {{\"description\": \"subtodo description\", \"type\": \"action|verification|analysis\"}},\n\
+                    ...\n\
+                ]\n\
+            }}",
+            description
+        );
+        let result = crate::llm_funcs::get_llm_response_ext(&prompt, Some(self), None, None, None, &[], None, Some("json"), None, false).await?;
+        Ok(result.response_json.and_then(|j| j.get("subtodos").and_then(|t| t.as_array()).map(|a| {
+            a.iter().map(|v| {
+                let mut m = HashMap::new();
+                m.insert("description".into(), v.get("description").cloned().unwrap_or(serde_json::json!("")));
+                m.insert("type".into(), v.get("type").cloned().unwrap_or(serde_json::json!("action")));
+                m
+            }).collect()
+        })).unwrap_or_default())
+    }
+
+    pub async fn execute_planning_item(&self, item: &HashMap<String, serde_json::Value>, planning_state: &HashMap<String, serde_json::Value>, context: &str) -> Result<HashMap<String, serde_json::Value>> {
+        let context_summary = self.get_planning_context_summary(planning_state);
+        let description = item.get("description").and_then(|t| t.as_str()).unwrap_or("");
+        let constraints: Vec<String> = planning_state.get("constraints").and_then(|c| c.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| format!("- {}", s))).collect())
+            .unwrap_or_default();
+        let command = format!(
+            "Current context:\n\
+            {}\n\
+            {}\n\n\
+            Execute this task: {}\n\n\
+            Constraints to follow:\n\
+            {}",
+            context_summary, context, description, constraints.join("\n")
+        );
+        let mut messages = Vec::new();
+        let jinxes = self.jinxes_dict.clone();
+        let result = crate::llm_funcs::check_llm_command(
+            &command,
+            Some(self.resolved_model().as_str()),
+            Some(self.resolved_provider().as_str()),
+            Some(self), &mut messages, None, &jinxes, 5,
+        ).await?;
+        Ok(result)
+    }
+
+    pub fn get_planning_context_summary(&self, planning_state: &HashMap<String, serde_json::Value>) -> String {
+        let mut context = Vec::new();
+        if let Some(facts) = planning_state.get("facts").and_then(|f| f.as_array()) {
+            let strs: Vec<&str> = facts.iter().filter_map(|v| v.as_str()).take(5).collect();
+            if !strs.is_empty() { context.push(format!("Facts: {}", strs.join("; "))); }
+        }
+        if let Some(mistakes) = planning_state.get("mistakes").and_then(|m| m.as_array()) {
+            let strs: Vec<&str> = mistakes.iter().filter_map(|v| v.as_str()).rev().take(3).collect();
+            if !strs.is_empty() { context.push(format!("Recent mistakes: {}", strs.join("; "))); }
+        }
+        if let Some(successes) = planning_state.get("successes").and_then(|s| s.as_array()) {
+            let strs: Vec<&str> = successes.iter().filter_map(|v| v.as_str()).rev().take(3).collect();
+            if !strs.is_empty() { context.push(format!("Recent successes: {}", strs.join("; "))); }
+        }
+        context.join("\n")
+    }
+
+    pub fn setup_db(&mut self) {
+        let db_path = crate::npc_sysenv::get_history_db_path();
+        self.command_history_path = Some(db_path.to_string_lossy().to_string());
+        let _ = crate::npc_sysenv::init_db_tables(Some(&db_path.to_string_lossy()));
+    }
 }
 
-pub fn load_npc_from_file(path: impl AsRef<Path>) -> Result<Npc> {
+pub fn load_npc_from_file(path: impl AsRef<Path>) -> Result<NPC> {
     let path = path.as_ref();
     let raw = std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad {
         path: path.display().to_string(),
@@ -468,7 +736,7 @@ pub fn load_npc_from_file(path: impl AsRef<Path>) -> Result<Npc> {
 
     let processed = preprocess_npc_yaml(&raw);
 
-    let mut npc: Npc =
+    let mut npc: NPC =
         serde_yaml::from_str(&processed).map_err(|e| NpcError::YamlParse {
             path: path.display().to_string(),
             source: e,
@@ -1290,13 +1558,16 @@ fn wrap_python_with_context(code: &str, context: &HashMap<String, serde_json::Va
     wrapper.push_str("    model = os.environ.get('NPCSH_CHAT_MODEL', 'llama3.2')\n");
     wrapper.push_str("    provider = os.environ.get('NPCSH_CHAT_PROVIDER', 'ollama')\n");
     wrapper.push_str("    api_url = None\n");
-    wrapper.push_str("    api_key = None\n");
+    wrapper.push_str("    api_key = None\n    plain_system_message = False\n    primary_directive = None\n    db_conn = None\n");
     wrapper.push_str("npc = _NPC()\n");
     wrapper.push_str("if 'npc' in context:\n");
     wrapper.push_str("    if isinstance(context['npc'], dict):\n");
     wrapper.push_str("        npc.name = context['npc'].get('name', npc.name)\n");
     wrapper.push_str("        npc.model = context['npc'].get('model', npc.model)\n");
     wrapper.push_str("        npc.provider = context['npc'].get('provider', npc.provider)\n");
+    wrapper.push_str("        npc.primary_directive = context['npc'].get('primary_directive', npc.primary_directive)\n");
+    wrapper.push_str("        npc.db_conn = context['npc'].get('db_conn', npc.db_conn)\n");
+
     wrapper.push_str("    elif isinstance(context['npc'], str):\n");
     wrapper.push_str("        npc.name = context['npc']\n");
     wrapper.push_str("try:\n");
@@ -1423,7 +1694,7 @@ async fn execute_python_interactive(
 
 #[derive(Debug, Clone)]
 pub struct Team {
-    pub npcs: HashMap<String, Npc>,
+    pub npcs: HashMap<String, NPC>,
 
     pub forenpc: Option<String>,
 
@@ -1462,15 +1733,15 @@ impl Default for Team {
 }
 
 impl Team {
-    pub fn get_npc(&self, name: &str) -> Option<&Npc> {
+    pub fn get_npc(&self, name: &str) -> Option<&NPC> {
         self.npcs.get(name)
     }
 
-    pub fn get_npc_mut(&mut self, name: &str) -> Option<&mut Npc> {
+    pub fn get_npc_mut(&mut self, name: &str) -> Option<&mut NPC> {
         self.npcs.get_mut(name)
     }
 
-    pub fn lead_npc(&self) -> Option<&Npc> {
+    pub fn lead_npc(&self) -> Option<&NPC> {
         self.forenpc
             .as_ref()
             .and_then(|name| self.npcs.get(name))
@@ -1485,7 +1756,7 @@ impl Team {
         self.jinxes.keys().map(|s| s.as_str()).collect()
     }
 
-    pub fn get_forenpc(&self) -> Option<&Npc> {
+    pub fn get_forenpc(&self) -> Option<&NPC> {
         self.lead_npc()
     }
 
@@ -1710,7 +1981,7 @@ fn load_agents_from_md(
     content: &str,
     team_model: &Option<String>,
     team_provider: &Option<String>,
-    npcs: &mut std::collections::HashMap<String, crate::npc_compiler::Npc>,
+    npcs: &mut std::collections::HashMap<String, crate::npc_compiler::NPC>,
 ) {
     let mut current_name: Option<String> = None;
     let mut current_body: Vec<String> = Vec::new();
@@ -1719,7 +1990,7 @@ fn load_agents_from_md(
         if let Some(name) = line.strip_prefix("## ") {
             if let Some(prev_name) = current_name.take() {
                 if !npcs.contains_key(&prev_name) {
-                    let mut npc = crate::npc_compiler::Npc::new(&prev_name, current_body.join("\n").trim());
+                    let mut npc = crate::npc_compiler::NPC::new(&prev_name, current_body.join("\n").trim());
                     npc.model = team_model.clone();
                     npc.provider = team_provider.clone();
                     npcs.insert(prev_name, npc);
@@ -1734,7 +2005,7 @@ fn load_agents_from_md(
 
     if let Some(name) = current_name {
         if !npcs.contains_key(&name) {
-            let mut npc = crate::npc_compiler::Npc::new(&name, current_body.join("\n").trim());
+            let mut npc = crate::npc_compiler::NPC::new(&name, current_body.join("\n").trim());
             npc.model = team_model.clone();
             npc.provider = team_provider.clone();
             npcs.insert(name, npc);
@@ -1746,7 +2017,7 @@ fn load_agents_from_dir(
     dir: &Path,
     team_model: &Option<String>,
     team_provider: &Option<String>,
-    npcs: &mut std::collections::HashMap<String, crate::npc_compiler::Npc>,
+    npcs: &mut std::collections::HashMap<String, crate::npc_compiler::NPC>,
 ) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -1795,7 +2066,7 @@ fn load_agents_from_dir(
             directive = content;
         }
 
-        let mut npc = crate::npc_compiler::Npc::new(&agent_name, &directive);
+        let mut npc = crate::npc_compiler::NPC::new(&agent_name, &directive);
         npc.model = model;
         npc.provider = provider;
         npcs.insert(agent_name, npc);
@@ -1815,13 +2086,13 @@ fn load_ctx_file(path: &Path) -> Result<TeamCtx> {
 }
 
 pub struct Agent {
-    pub npc: Npc,
+    pub npc: NPC,
     pub messages: Vec<Message>,
     pub tool_registry: ToolRegistry,
 }
 
 impl Agent {
-    pub fn new(npc: Npc) -> Self {
+    pub fn new(npc: NPC) -> Self {
         let mut registry = ToolRegistry::new();
         register_default_tools(&mut registry);
         Self {
@@ -1832,7 +2103,7 @@ impl Agent {
     }
 
     pub fn with_name_and_directive(name: &str, directive: &str) -> Self {
-        Self::new(Npc::new(name, directive))
+        Self::new(NPC::new(name, directive))
     }
 
     pub async fn run(&mut self, input: &str) -> Result<String> {
@@ -1883,7 +2154,7 @@ pub struct ToolAgent {
 }
 
 impl ToolAgent {
-    pub fn new(npc: Npc, extra_tools: Vec<RegisteredTool>) -> Self {
+    pub fn new(npc: NPC, extra_tools: Vec<RegisteredTool>) -> Self {
         let mut agent = Agent::new(npc);
         for tool in extra_tools {
             agent.tool_registry.register(tool);
@@ -1903,7 +2174,7 @@ pub struct CodingAgent {
 }
 
 impl CodingAgent {
-    pub fn new(npc: Npc, language: impl Into<String>) -> Self {
+    pub fn new(npc: NPC, language: impl Into<String>) -> Self {
         Self {
             agent: Agent::new(npc),
             language: language.into(),

@@ -1,5 +1,5 @@
 
-use crate::npc_compiler::Npc;
+use crate::npc_compiler::NPC;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -13,7 +13,7 @@ pub struct Process {
 
     pub ppid: Pid,
 
-    pub npc: Npc,
+    pub npc: NPC,
 
     pub state: ProcessState,
 
@@ -127,7 +127,7 @@ impl Default for ResourceLimits {
             max_output_tokens_per_turn: None,
             total_token_budget: None,
             max_cost_usd: None,
-            max_tool_calls_per_turn: Some(20),
+            max_tool_calls_per_turn: None,
             max_turns: None,
             max_runtime_secs: None,
             max_children: Some(10),
@@ -191,7 +191,7 @@ pub enum FileDescriptor {
 }
 
 impl Process {
-    pub fn spawn(pid: Pid, ppid: Pid, npc: Npc, capabilities: Capabilities) -> Self {
+    pub fn spawn(pid: Pid, ppid: Pid, npc: NPC, capabilities: Capabilities) -> Self {
         let now = Utc::now();
         Self {
             pid,

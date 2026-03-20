@@ -90,6 +90,9 @@ zip = "2"
 
 # URL encoding for web search
 urlencoding = "2"
+rustyline = "17.0.2"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+dotenvy = "0.15.7"
 
 [features]
 default = ["ffi", "llamacpp"]

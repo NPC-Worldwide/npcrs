@@ -56,7 +56,7 @@ pub fn format_sse_raw(data: &serde_json::Value) -> String {
     format!("data: {}\n\n", data)
 }
 
-pub fn resolve_npc_tools(npc: &crate::npc_compiler::Npc, jinxes: &HashMap<String, crate::npc_compiler::Jinx>) -> (Vec<crate::r#gen::ToolDef>, HashMap<String, crate::npc_compiler::ToolExecutor>) {
+pub fn resolve_npc_tools(npc: &crate::npc_compiler::NPC, jinxes: &HashMap<String, crate::npc_compiler::Jinx>) -> (Vec<crate::r#gen::ToolDef>, HashMap<String, crate::npc_compiler::ToolExecutor>) {
     npc.resolve_tools(jinxes)
 }
 
