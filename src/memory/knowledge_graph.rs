@@ -374,7 +374,7 @@ pub fn kg_add_fact(kg: &mut KnowledgeGraph, statement: &str, source_text: Option
     node_idx
 }
 
-pub fn kg_search_facts(kg: &KnowledgeGraph, query: &str) -> Vec<&KgNode> {
+pub fn kg_search_facts<'a>(kg: &'a KnowledgeGraph, query: &str) -> Vec<&'a KgNode> {
     kg.search_facts(query)
 }
 
@@ -392,7 +392,7 @@ pub fn kg_list_concepts(kg: &KnowledgeGraph) -> Vec<&KgNode> {
     kg.entities_of_type(&KgNodeType::Concept)
 }
 
-pub fn kg_get_facts_for_concept(kg: &KnowledgeGraph, concept_name: &str) -> Vec<(&KgNode, &KgEdge)> {
+pub fn kg_get_facts_for_concept<'a>(kg: &'a KnowledgeGraph, concept_name: &str) -> Vec<(&'a KgNode, &'a KgEdge)> {
     kg.neighbors(concept_name)
         .into_iter()
         .filter(|(n, _)| n.node_type == KgNodeType::Fact)
@@ -434,6 +434,244 @@ pub fn kg_get_stats(kg: &KnowledgeGraph) -> HashMap<String, usize> {
 
 pub async fn kg_evolve_knowledge(kg: &mut KnowledgeGraph, new_text: &str, model: &str, provider: &str) -> Result<()> {
     kg_evolve_incremental(kg, new_text, model, provider).await
+}
+
+pub async fn kg_sleep_process(kg: &mut KnowledgeGraph, model: &str, provider: &str) -> Result<()> {
+    let fact_names: Vec<String> = kg.entities_of_type(&KgNodeType::Fact).iter().map(|f| f.name.clone()).collect();
+    let fact_contents: Vec<String> = kg.entities_of_type(&KgNodeType::Fact).iter().map(|f| f.content.clone()).collect();
+    let concept_count = kg.entities_of_type(&KgNodeType::Concept).len();
+
+    if fact_names.len() > 10 || concept_count > 5 {
+        let random_fact = fact_contents.first().cloned().unwrap_or_default();
+        let all_facts = fact_contents.clone();
+        let prompt = format!(
+            "Analyze this fact: \"{}\"\nCompare with existing facts: {:?}\nIs it novel or redundant?\nJSON: {{\"decision\": \"novel or redundant\", \"reason\": str}}",
+            random_fact, &all_facts[..all_facts.len().min(10)]
+        );
+        let messages = vec![crate::r#gen::Message::user(&prompt)];
+        let resp = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+        let content = resp.message.content.unwrap_or_default();
+        let json_str = extract_json_from_response(&content);
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if parsed.get("decision").and_then(|d| d.as_str()) == Some("redundant") {
+                if let Some(name) = fact_names.first() {
+                    kg_remove_fact(kg, name);
+                }
+            }
+        }
+    }
+
+    if !fact_contents.is_empty() {
+        let fact_to_deepen_content = fact_contents.first().unwrap();
+        let prompt = format!(
+            "Look at this fact and infer new implied facts:\n- {}\nJSON: {{\"implied_facts\": [{{\"statement\": str}}]}}",
+            fact_to_deepen_content
+        );
+        let messages = vec![crate::r#gen::Message::user(&prompt)];
+        let resp = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+        let content = resp.message.content.unwrap_or_default();
+        let json_str = extract_json_from_response(&content);
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(implied) = parsed.get("implied_facts").and_then(|f| f.as_array()) {
+                for fact in implied {
+                    if let Some(stmt) = fact.get("statement").and_then(|s| s.as_str()) {
+                        kg.add_entity(stmt, KgNodeType::Fact, "inferred during sleep");
+                    }
+                }
+            }
+        }
+    }
+
+    kg.increment_generation();
+    Ok(())
+}
+
+pub async fn kg_dream_process(kg: &mut KnowledgeGraph, model: &str, provider: &str, num_seeds: usize) -> Result<()> {
+    let concepts = kg.entities_of_type(&KgNodeType::Concept);
+    if concepts.len() < num_seeds { return Ok(()); }
+
+    let seed_names: Vec<String> = concepts.iter().take(num_seeds).map(|c| c.name.clone()).collect();
+    let prompt = format!(
+        "Write a short speculative paragraph connecting these concepts: {:?}\nJSON: {{\"dream_text\": \"paragraph\"}}",
+        seed_names
+    );
+    let messages = vec![crate::r#gen::Message::user(&prompt)];
+    let resp = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+    let content = resp.message.content.unwrap_or_default();
+    let json_str = extract_json_from_response(&content);
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
+        if let Some(dream_text) = parsed.get("dream_text").and_then(|d| d.as_str()) {
+            kg_evolve_incremental(kg, dream_text, model, provider).await?;
+        }
+    }
+    Ok(())
+}
+
+pub fn kg_link_search(kg: &KnowledgeGraph, query: &str, max_depth: usize, max_results: usize) -> Vec<HashMap<String, serde_json::Value>> {
+    let seeds = kg.search_facts(query);
+    let mut results: Vec<HashMap<String, serde_json::Value>> = Vec::new();
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for seed in seeds.iter().take(5) {
+        if visited.contains(&seed.name) { continue; }
+        visited.insert(seed.name.clone());
+        let mut entry = HashMap::new();
+        entry.insert("content".into(), serde_json::json!(seed.content));
+        entry.insert("type".into(), serde_json::json!("fact"));
+        entry.insert("depth".into(), serde_json::json!(0));
+        entry.insert("score".into(), serde_json::json!(1.0));
+        results.push(entry);
+    }
+
+    for depth in 1..=max_depth {
+        let current_names: Vec<String> = results.iter()
+            .filter(|r| r.get("depth").and_then(|d| d.as_u64()) == Some((depth - 1) as u64))
+            .filter_map(|r| r.get("content").and_then(|c| c.as_str()).map(String::from))
+            .collect();
+
+        for name in current_names {
+            for (neighbor, edge) in kg.neighbors(&name) {
+                if visited.contains(&neighbor.name) || results.len() >= max_results { continue; }
+                visited.insert(neighbor.name.clone());
+                let mut entry = HashMap::new();
+                entry.insert("content".into(), serde_json::json!(neighbor.content));
+                entry.insert("type".into(), serde_json::json!(format!("{:?}", neighbor.node_type)));
+                entry.insert("depth".into(), serde_json::json!(depth));
+                entry.insert("score".into(), serde_json::json!(1.0 / (depth as f64 + 1.0)));
+                entry.insert("link_type".into(), serde_json::json!(edge.relation));
+                results.push(entry);
+            }
+        }
+    }
+
+    results.truncate(max_results);
+    results
+}
+
+pub async fn kg_embedding_search(kg: &KnowledgeGraph, query: &str, embedding_model: &str, embedding_provider: &str, similarity_threshold: f64, max_results: usize) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+    let query_emb = crate::r#gen::embeddings::get_embeddings(query, embedding_model, embedding_provider, None).await?;
+    let mut results: Vec<HashMap<String, serde_json::Value>> = Vec::new();
+
+    let facts = kg.entities_of_type(&KgNodeType::Fact);
+    for fact in &facts {
+        let fact_emb = crate::r#gen::embeddings::get_embeddings(&fact.content, embedding_model, embedding_provider, None).await?;
+        let sim = crate::r#gen::embeddings::cosine_similarity(&query_emb, &fact_emb) as f64;
+        if sim >= similarity_threshold {
+            let mut entry = HashMap::new();
+            entry.insert("content".into(), serde_json::json!(fact.content));
+            entry.insert("type".into(), serde_json::json!("fact"));
+            entry.insert("score".into(), serde_json::json!(sim));
+            results.push(entry);
+        }
+    }
+
+    let concepts = kg.entities_of_type(&KgNodeType::Concept);
+    for concept in &concepts {
+        let c_emb = crate::r#gen::embeddings::get_embeddings(&concept.name, embedding_model, embedding_provider, None).await?;
+        let sim = crate::r#gen::embeddings::cosine_similarity(&query_emb, &c_emb) as f64;
+        if sim >= similarity_threshold {
+            let mut entry = HashMap::new();
+            entry.insert("content".into(), serde_json::json!(concept.name));
+            entry.insert("type".into(), serde_json::json!("concept"));
+            entry.insert("score".into(), serde_json::json!(sim));
+            results.push(entry);
+        }
+    }
+
+    results.sort_by(|a, b| {
+        let sa = a.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+        let sb = b.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    results.truncate(max_results);
+    Ok(results)
+}
+
+pub async fn kg_hybrid_search(kg: &KnowledgeGraph, query: &str, mode: &str, max_depth: usize, max_results: usize, embedding_model: Option<&str>, embedding_provider: Option<&str>, similarity_threshold: f64) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+    let mut all_results: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+
+    if mode.contains("keyword") || mode == "all" {
+        let keyword_results = kg.search_facts(query);
+        for fact in keyword_results {
+            let mut entry = HashMap::new();
+            entry.insert("content".into(), serde_json::json!(fact.content));
+            entry.insert("type".into(), serde_json::json!("fact"));
+            entry.insert("score".into(), serde_json::json!(0.7));
+            entry.insert("source".into(), serde_json::json!("keyword"));
+            all_results.insert(fact.content.clone(), entry);
+        }
+    }
+
+    if (mode.contains("link") || mode == "all") && !all_results.is_empty() {
+        let link_results = kg_link_search(kg, query, max_depth, max_results);
+        for r in link_results {
+            let content = r.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            if let Some(existing) = all_results.get_mut(&content) {
+                let old_score = existing.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+                let new_score = r.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+                existing.insert("score".into(), serde_json::json!(old_score.max(new_score) * 1.05));
+            } else {
+                all_results.insert(content, r);
+            }
+        }
+    }
+
+    if mode.contains("embedding") || mode == "all" {
+        let em = embedding_model.unwrap_or("nomic-embed-text");
+        let ep = embedding_provider.unwrap_or("ollama");
+        if let Ok(emb_results) = kg_embedding_search(kg, query, em, ep, similarity_threshold, max_results).await {
+            for r in emb_results {
+                let content = r.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                if let Some(existing) = all_results.get_mut(&content) {
+                    let old_score = existing.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+                    let new_score = r.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+                    existing.insert("score".into(), serde_json::json!(old_score.max(new_score) * 1.1));
+                } else {
+                    all_results.insert(content, r);
+                }
+            }
+        }
+    }
+
+    let mut final_results: Vec<HashMap<String, serde_json::Value>> = all_results.into_values().collect();
+    final_results.sort_by(|a, b| {
+        let sa = a.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+        let sb = b.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    final_results.truncate(max_results);
+    Ok(final_results)
+}
+
+pub fn kg_explore_concept(kg: &KnowledgeGraph, concept_name: &str, max_depth: usize) -> HashMap<String, serde_json::Value> {
+    let mut result = HashMap::new();
+    result.insert("concept".into(), serde_json::json!(concept_name));
+
+    let direct_facts: Vec<String> = kg.neighbors(concept_name).iter()
+        .filter(|(n, _)| n.node_type == KgNodeType::Fact)
+        .map(|(n, _)| n.content.clone())
+        .collect();
+    result.insert("direct_facts".into(), serde_json::json!(direct_facts));
+
+    let related_concepts: Vec<String> = kg.neighbors(concept_name).iter()
+        .filter(|(n, _)| n.node_type == KgNodeType::Concept)
+        .map(|(n, _)| n.name.clone())
+        .collect();
+    result.insert("related_concepts".into(), serde_json::json!(related_concepts));
+
+    if max_depth > 0 {
+        let mut extended_facts: Vec<String> = Vec::new();
+        for rc in &related_concepts {
+            for (n, _) in kg.neighbors(rc) {
+                if n.node_type == KgNodeType::Fact && !direct_facts.contains(&n.content) {
+                    extended_facts.push(n.content.clone());
+                }
+            }
+        }
+        result.insert("extended_facts".into(), serde_json::json!(extended_facts));
+    }
+
+    result
 }
 
 fn extract_json_from_response(response: &str) -> &str {

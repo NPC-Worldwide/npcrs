@@ -107,6 +107,49 @@ pub fn lookup_cost(model: &str) -> (f64, f64) {
     (0.0, 0.0)
 }
 
+static CONTEXT_WINDOWS: Lazy<HashMap<&'static str, usize>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    m.insert("gpt-4o", 128000);
+    m.insert("gpt-4o-mini", 128000);
+    m.insert("gpt-4-turbo", 128000);
+    m.insert("gpt-3.5-turbo", 16385);
+    m.insert("gpt-5", 1000000);
+    m.insert("o1", 200000);
+    m.insert("o3", 200000);
+    m.insert("o4-mini", 200000);
+    m.insert("claude-3-5-sonnet", 200000);
+    m.insert("claude-3-opus", 200000);
+    m.insert("claude-3-haiku", 200000);
+    m.insert("claude-sonnet-4", 200000);
+    m.insert("claude-opus-4", 200000);
+    m.insert("gemini-1.5-pro", 2000000);
+    m.insert("gemini-1.5-flash", 1000000);
+    m.insert("gemini-2.0-flash", 1000000);
+    m.insert("gemini-2.5-pro", 1000000);
+    m.insert("gemini-2.5-flash", 1000000);
+    m.insert("llama-3", 8192);
+    m.insert("llama-3.1", 131072);
+    m.insert("llama-3.2", 131072);
+    m.insert("mixtral", 32768);
+    m.insert("deepseek-v3", 64000);
+    m.insert("deepseek-r1", 64000);
+    m.insert("qwen3", 32768);
+    m
+});
+
+pub fn get_model_context_window(model: &str, _provider: Option<&str>) -> usize {
+    let model_lower = model.to_lowercase();
+    if let Some(&window) = CONTEXT_WINDOWS.get(model_lower.as_str()) {
+        return window;
+    }
+    for (&key, &window) in CONTEXT_WINDOWS.iter() {
+        if model_lower.starts_with(key) || model_lower.contains(key) {
+            return window;
+        }
+    }
+    4096
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

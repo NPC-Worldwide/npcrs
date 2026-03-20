@@ -347,6 +347,7 @@ fn build_jinx_schema(jinx: &Jinx) -> (String, String) {
     (desc.clone(), schema_str)
 }
 
+#[async_recursion::async_recursion(?Send)]
 pub async fn handle_jinx_call(
     command: &str,
     jinx_name: &str,
@@ -576,6 +577,7 @@ pub async fn handle_action_choice(
     }
 }
 
+#[async_recursion::async_recursion(?Send)]
 pub async fn check_llm_command(
     command: &str,
     model: Option<&str>,
@@ -801,6 +803,7 @@ pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option
     Ok(r)
 }
 
+#[async_recursion::async_recursion(?Send)]
 pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
     let prompt = format!(
         "Extract facts from this text. A fact is a specific statement that can be sourced from the text.\n\n\
@@ -829,6 +832,7 @@ pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option
     Ok(facts)
 }
 
+#[async_recursion::async_recursion(?Send)]
 pub async fn zoom_in(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
     let valid_facts: Vec<&serde_json::Value> = facts.iter()
         .filter(|f| f.get("statement").and_then(|s| s.as_str()).is_some())
@@ -1077,6 +1081,7 @@ pub async fn consolidate_facts_llm(new_fact: &serde_json::Value, existing_facts:
     llm_call_json(&prompt, model, provider, npc, context).await
 }
 
+#[async_recursion::async_recursion(?Send)]
 pub async fn get_related_facts_llm(new_fact_statement: &str, existing_fact_statements: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&Npc>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<String>> {
     let prompt = format!(
         "A new fact has been learned: \"{}\"\n\n\

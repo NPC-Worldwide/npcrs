@@ -2,6 +2,7 @@
 use crate::error::Result;
 use chrono::Utc;
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::path::Path;
 
 pub fn generate_message_id() -> String {
@@ -14,21 +15,40 @@ pub fn start_new_conversation() -> String {
 
 pub struct CommandHistory {
     conn: Connection,
+    pool: Option<sqlx::AnyPool>,
 }
 
 impl CommandHistory {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let conn = Connection::open(path)?;
-        let history = Self { conn };
+        let conn = Connection::open(path.as_ref())?;
+        let history = Self { conn, pool: None };
         history.init_tables()?;
         Ok(history)
     }
 
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let history = Self { conn };
+        let history = Self { conn, pool: None };
         history.init_tables()?;
         Ok(history)
+    }
+
+    pub async fn open_async(path: &str) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        let url = if path == ":memory:" {
+            "sqlite::memory:".to_string()
+        } else {
+            format!("sqlite://{}?mode=rwc", path)
+        };
+        let pool = sqlx::AnyPool::connect(&url).await
+            .map_err(|e| crate::error::NpcError::Other(format!("sqlx connect: {}", e)))?;
+        let history = Self { conn, pool: Some(pool) };
+        history.init_tables()?;
+        Ok(history)
+    }
+
+    pub fn pool(&self) -> Option<&sqlx::AnyPool> {
+        self.pool.as_ref()
     }
 
     fn init_tables(&self) -> Result<()> {
@@ -454,11 +474,332 @@ impl CommandHistory {
     pub fn save_attachment_to_message(&self, message_id: &str, attachment_type: &str, data: &[u8], filename: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT OR IGNORE INTO message_attachments (message_id, attachment_type, data, filename, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR IGNORE INTO message_attachments (message_id, attachment_type, attachment_data, attachment_name, upload_timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![message_id, attachment_type, data, filename, now],
         )?;
         Ok(())
     }
+
+    pub fn add_command(&self, command: &str, subcommands: &str, output: &str, location: &str) -> Result<()> {
+        let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        self.conn.execute(
+            "INSERT INTO command_history (timestamp, command, subcommands, output, location) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![now, command, subcommands, output, location],
+        )?;
+        Ok(())
+    }
+
+    pub fn add_conversation(&self, conversation_id: &str, role: &str, content: &str, npc: Option<&str>, team: Option<&str>, model: Option<&str>, provider: Option<&str>) -> Result<String> {
+        let dir = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
+        self.save_conversation_message(conversation_id, role, content, &dir, model, provider, npc, team, None, None, None, None, None, None)
+    }
+
+    pub fn add_memory_to_database(&self, message_id: &str, conversation_id: &str, npc: &str, team: &str, directory_path: &str, initial_memory: &str, model: Option<&str>, provider: Option<&str>) -> Result<i64> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO memory_lifecycle (message_id, conversation_id, npc, team, directory_path, timestamp, initial_memory, status, model, provider, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, ?9, ?10)",
+            params![message_id, conversation_id, npc, team, directory_path, now, initial_memory, model, provider, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_memories_for_scope(&self, npc: &str, team: &str, directory_path: &str, limit: usize) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, initial_memory, final_memory, status, created_at FROM memory_lifecycle WHERE npc = ?1 AND team = ?2 AND directory_path = ?3 AND status IN ('approved', 'human-approved', 'human-edited') ORDER BY created_at DESC LIMIT ?4"
+        )?;
+        let results = stmt.query_map(params![npc, team, directory_path, limit as i64], |row| {
+            let mut m = HashMap::new();
+            m.insert("id".into(), serde_json::json!(row.get::<_, i64>(0)?));
+            m.insert("initial_memory".into(), serde_json::json!(row.get::<_, String>(1)?));
+            m.insert("final_memory".into(), serde_json::json!(row.get::<_, Option<String>>(2)?));
+            m.insert("status".into(), serde_json::json!(row.get::<_, String>(3)?));
+            m.insert("created_at".into(), serde_json::json!(row.get::<_, String>(4)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn search_memory(&self, query: &str, npc: Option<&str>, team: Option<&str>, limit: usize) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let pattern = format!("%{}%", query);
+        let sql = match (npc, team) {
+            (Some(n), Some(t)) => format!("SELECT id, initial_memory, final_memory, status, npc, team FROM memory_lifecycle WHERE (initial_memory LIKE ?1 OR final_memory LIKE ?1) AND npc = '{}' AND team = '{}' ORDER BY created_at DESC LIMIT ?2", n, t),
+            (Some(n), None) => format!("SELECT id, initial_memory, final_memory, status, npc, team FROM memory_lifecycle WHERE (initial_memory LIKE ?1 OR final_memory LIKE ?1) AND npc = '{}' ORDER BY created_at DESC LIMIT ?2", n),
+            _ => "SELECT id, initial_memory, final_memory, status, npc, team FROM memory_lifecycle WHERE (initial_memory LIKE ?1 OR final_memory LIKE ?1) ORDER BY created_at DESC LIMIT ?2".to_string(),
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let results = stmt.query_map(params![pattern, limit as i64], |row| {
+            let mut m = HashMap::new();
+            m.insert("id".into(), serde_json::json!(row.get::<_, i64>(0)?));
+            m.insert("initial_memory".into(), serde_json::json!(row.get::<_, String>(1)?));
+            m.insert("final_memory".into(), serde_json::json!(row.get::<_, Option<String>>(2)?));
+            m.insert("status".into(), serde_json::json!(row.get::<_, String>(3)?));
+            m.insert("npc".into(), serde_json::json!(row.get::<_, String>(4)?));
+            m.insert("team".into(), serde_json::json!(row.get::<_, String>(5)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_memory_examples_for_context(&self, npc: &str, team: &str, directory_path: &str, limit: usize) -> Result<Vec<String>> {
+        let memories = self.get_memories_for_scope(npc, team, directory_path, limit)?;
+        Ok(memories.iter().map(|m| {
+            m.get("final_memory").and_then(|v| v.as_str()).or_else(|| m.get("initial_memory").and_then(|v| v.as_str())).unwrap_or("").to_string()
+        }).filter(|s| !s.is_empty()).collect())
+    }
+
+    pub fn update_memory_status(&self, memory_id: i64, new_status: &str, final_memory: Option<&str>) -> Result<()> {
+        if let Some(fm) = final_memory {
+            self.conn.execute("UPDATE memory_lifecycle SET status = ?1, final_memory = ?2 WHERE id = ?3", params![new_status, fm, memory_id])?;
+        } else {
+            self.conn.execute("UPDATE memory_lifecycle SET status = ?1 WHERE id = ?2", params![new_status, memory_id])?;
+        }
+        Ok(())
+    }
+
+    pub fn get_approved_memories_by_scope(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT npc, COALESCE(final_memory, initial_memory) FROM memory_lifecycle WHERE status IN ('approved', 'human-approved', 'human-edited') ORDER BY npc"
+        )?;
+        let mut result: HashMap<String, Vec<String>> = HashMap::new();
+        let rows = stmt.query_map(params![], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        for row in rows.flatten() {
+            result.entry(row.0).or_default().push(row.1);
+        }
+        Ok(result)
+    }
+
+    pub fn get_jinx_executions(&self, jinx_name: Option<&str>, limit: usize) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let sql = if let Some(name) = jinx_name {
+            format!("SELECT message_id, jinx_name, input, output, status, timestamp FROM jinx_executions WHERE jinx_name = '{}' ORDER BY timestamp DESC LIMIT {}", name, limit)
+        } else {
+            format!("SELECT message_id, jinx_name, input, output, status, timestamp FROM jinx_executions ORDER BY timestamp DESC LIMIT {}", limit)
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let results = stmt.query_map(params![], |row| {
+            let mut m = HashMap::new();
+            m.insert("message_id".into(), serde_json::json!(row.get::<_, String>(0)?));
+            m.insert("jinx_name".into(), serde_json::json!(row.get::<_, String>(1)?));
+            m.insert("input".into(), serde_json::json!(row.get::<_, String>(2)?));
+            m.insert("output".into(), serde_json::json!(row.get::<_, String>(3)?));
+            m.insert("status".into(), serde_json::json!(row.get::<_, String>(4)?));
+            m.insert("timestamp".into(), serde_json::json!(row.get::<_, String>(5)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_npc_executions(&self, npc_name: &str, limit: usize) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT message_id, input, npc, team, model, provider, timestamp FROM npc_executions WHERE npc = ?1 ORDER BY timestamp DESC LIMIT ?2"
+        )?;
+        let results = stmt.query_map(params![npc_name, limit as i64], |row| {
+            let mut m = HashMap::new();
+            m.insert("message_id".into(), serde_json::json!(row.get::<_, String>(0)?));
+            m.insert("input".into(), serde_json::json!(row.get::<_, String>(1)?));
+            m.insert("npc".into(), serde_json::json!(row.get::<_, String>(2)?));
+            m.insert("team".into(), serde_json::json!(row.get::<_, String>(3)?));
+            m.insert("model".into(), serde_json::json!(row.get::<_, String>(4)?));
+            m.insert("provider".into(), serde_json::json!(row.get::<_, String>(5)?));
+            m.insert("timestamp".into(), serde_json::json!(row.get::<_, String>(6)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn label_execution(&self, message_id: &str, label: &str) -> Result<()> {
+        self.add_label("execution", message_id, label, None)
+    }
+
+    pub fn add_label(&self, entity_type: &str, entity_id: &str, label: &str, metadata: Option<&str>) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO labels (entity_type, entity_id, label, metadata, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![entity_type, entity_id, label, metadata, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_labels(&self, entity_type: Option<&str>, label: Option<&str>) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let sql = match (entity_type, label) {
+            (Some(et), Some(l)) => format!("SELECT id, entity_type, entity_id, label, metadata, created_at FROM labels WHERE entity_type = '{}' AND label = '{}'", et, l),
+            (Some(et), None) => format!("SELECT id, entity_type, entity_id, label, metadata, created_at FROM labels WHERE entity_type = '{}'", et),
+            (None, Some(l)) => format!("SELECT id, entity_type, entity_id, label, metadata, created_at FROM labels WHERE label = '{}'", l),
+            _ => "SELECT id, entity_type, entity_id, label, metadata, created_at FROM labels".to_string(),
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let results = stmt.query_map(params![], |row| {
+            let mut m = HashMap::new();
+            m.insert("id".into(), serde_json::json!(row.get::<_, i64>(0)?));
+            m.insert("entity_type".into(), serde_json::json!(row.get::<_, String>(1)?));
+            m.insert("entity_id".into(), serde_json::json!(row.get::<_, String>(2)?));
+            m.insert("label".into(), serde_json::json!(row.get::<_, String>(3)?));
+            m.insert("metadata".into(), serde_json::json!(row.get::<_, Option<String>>(4)?));
+            m.insert("created_at".into(), serde_json::json!(row.get::<_, String>(5)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_training_data_by_label(&self, label: &str) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ch.role, ch.content, ch.model, ch.npc FROM conversation_history ch INNER JOIN labels l ON l.entity_id = ch.message_id WHERE l.label = ?1"
+        )?;
+        let results = stmt.query_map(params![label], |row| {
+            let mut m = HashMap::new();
+            m.insert("role".into(), serde_json::json!(row.get::<_, String>(0)?));
+            m.insert("content".into(), serde_json::json!(row.get::<_, String>(1)?));
+            m.insert("model".into(), serde_json::json!(row.get::<_, Option<String>>(2)?));
+            m.insert("npc".into(), serde_json::json!(row.get::<_, Option<String>>(3)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_message_by_id(&self, message_id: &str) -> Result<Option<ConversationMessage>> {
+        let result = self.conn.query_row(
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE message_id = ?1",
+            params![message_id],
+            |row| Ok(ConversationMessage { message_id: row.get(0)?, role: row.get(1)?, content: row.get(2)?, model: row.get(3)?, provider: row.get(4)?, npc: row.get(5)?, team: row.get(6)?, tool_calls: row.get(7)?, input_tokens: row.get(8)?, output_tokens: row.get(9)?, cost: row.get(10)? }),
+        );
+        match result { Ok(m) => Ok(Some(m)), Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None), Err(e) => Err(e.into()) }
+    }
+
+    pub fn get_messages_by_npc(&self, npc: &str, n_last: usize) -> Result<Vec<ConversationMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE npc = ?1 ORDER BY id DESC LIMIT ?2"
+        )?;
+        let results = stmt.query_map(params![npc, n_last as i64], |row| {
+            Ok(ConversationMessage { message_id: row.get(0)?, role: row.get(1)?, content: row.get(2)?, model: row.get(3)?, provider: row.get(4)?, npc: row.get(5)?, team: row.get(6)?, tool_calls: row.get(7)?, input_tokens: row.get(8)?, output_tokens: row.get(9)?, cost: row.get(10)? })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_messages_by_team(&self, team: &str, n_last: usize) -> Result<Vec<ConversationMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE team = ?1 ORDER BY id DESC LIMIT ?2"
+        )?;
+        let results = stmt.query_map(params![team, n_last as i64], |row| {
+            Ok(ConversationMessage { message_id: row.get(0)?, role: row.get(1)?, content: row.get(2)?, model: row.get(3)?, provider: row.get(4)?, npc: row.get(5)?, team: row.get(6)?, tool_calls: row.get(7)?, input_tokens: row.get(8)?, output_tokens: row.get(9)?, cost: row.get(10)? })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_most_recent_conversation_id(&self) -> Result<Option<String>> {
+        self.retrieve_last_conversation()
+    }
+
+    pub fn get_last_conversation(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
+        self.load_conversation_messages(conversation_id)
+    }
+
+    pub fn get_conversations_by_id(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
+        self.load_conversation_messages(conversation_id)
+    }
+
+    pub fn get_last_command(&self) -> Result<Option<HashMap<String, String>>> {
+        let result = self.conn.query_row(
+            "SELECT command, output, location, timestamp FROM command_history ORDER BY id DESC LIMIT 1",
+            params![],
+            |row| {
+                let mut m = HashMap::new();
+                m.insert("command".into(), row.get::<_, String>(0)?);
+                m.insert("output".into(), row.get::<_, String>(1)?);
+                m.insert("location".into(), row.get::<_, String>(2)?);
+                m.insert("timestamp".into(), row.get::<_, String>(3)?);
+                Ok(m)
+            }
+        );
+        match result { Ok(m) => Ok(Some(m)), Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None), Err(e) => Err(e.into()) }
+    }
+
+    pub fn search_commands(&self, search_term: &str) -> Result<Vec<HashMap<String, String>>> {
+        let pattern = format!("%{}%", search_term);
+        let mut stmt = self.conn.prepare("SELECT command, output, location, timestamp FROM command_history WHERE command LIKE ?1 ORDER BY id DESC LIMIT 100")?;
+        let results = stmt.query_map(params![pattern], |row| {
+            let mut m = HashMap::new();
+            m.insert("command".into(), row.get::<_, String>(0)?);
+            m.insert("output".into(), row.get::<_, String>(1)?);
+            m.insert("location".into(), row.get::<_, String>(2)?);
+            m.insert("timestamp".into(), row.get::<_, String>(3)?);
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn search_conversations(&self, search_term: &str) -> Result<Vec<ConversationMessage>> {
+        let pattern = format!("%{}%", search_term);
+        let mut stmt = self.conn.prepare(
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE content LIKE ?1 ORDER BY id DESC LIMIT 100"
+        )?;
+        let results = stmt.query_map(params![pattern], |row| {
+            Ok(ConversationMessage { message_id: row.get(0)?, role: row.get(1)?, content: row.get(2)?, model: row.get(3)?, provider: row.get(4)?, npc: row.get(5)?, team: row.get(6)?, tool_calls: row.get(7)?, input_tokens: row.get(8)?, output_tokens: row.get(9)?, cost: row.get(10)? })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_all_commands(&self, limit: usize) -> Result<Vec<HashMap<String, String>>> {
+        let mut stmt = self.conn.prepare("SELECT command, output, location, timestamp FROM command_history ORDER BY id DESC LIMIT ?1")?;
+        let results = stmt.query_map(params![limit as i64], |row| {
+            let mut m = HashMap::new();
+            m.insert("command".into(), row.get::<_, String>(0)?);
+            m.insert("output".into(), row.get::<_, String>(1)?);
+            m.insert("location".into(), row.get::<_, String>(2)?);
+            m.insert("timestamp".into(), row.get::<_, String>(3)?);
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn delete_message(&self, conversation_id: &str, message_id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM conversation_history WHERE conversation_id = ?1 AND message_id = ?2", params![conversation_id, message_id])?;
+        Ok(())
+    }
+
+    pub fn get_message_attachments(&self, message_id: &str) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let mut stmt = self.conn.prepare("SELECT id, attachment_name, attachment_type, attachment_size, file_path FROM message_attachments WHERE message_id = ?1")?;
+        let results = stmt.query_map(params![message_id], |row| {
+            let mut m = HashMap::new();
+            m.insert("id".into(), serde_json::json!(row.get::<_, i64>(0)?));
+            m.insert("name".into(), serde_json::json!(row.get::<_, Option<String>>(1)?));
+            m.insert("type".into(), serde_json::json!(row.get::<_, Option<String>>(2)?));
+            m.insert("size".into(), serde_json::json!(row.get::<_, Option<i64>>(3)?));
+            m.insert("file_path".into(), serde_json::json!(row.get::<_, Option<String>>(4)?));
+            Ok(m)
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn get_available_tables(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")?;
+        let results = stmt.query_map(params![], |row| row.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn close(self) {
+        drop(self.conn);
+    }
+}
+
+pub fn normalize_path_for_db(path: &str) -> String {
+    let expanded = shellexpand::tilde(path).to_string();
+    std::path::Path::new(&expanded).canonicalize().map(|p| p.to_string_lossy().to_string()).unwrap_or(expanded)
+}
+
+pub fn flush_messages(n: usize, messages: &[HashMap<String, String>]) -> HashMap<String, serde_json::Value> {
+    let kept: Vec<&HashMap<String, String>> = if messages.len() > n { &messages[messages.len()-n..] } else { messages }.iter().collect();
+    let mut result = HashMap::new();
+    result.insert("messages".into(), serde_json::json!(kept));
+    result.insert("flushed".into(), serde_json::json!(messages.len().saturating_sub(n)));
+    result
+}
+
+pub fn format_memory_context(memory_examples: &[String]) -> String {
+    if memory_examples.is_empty() { return String::new(); }
+    let mut ctx = String::from("Here are some things I remember about you:\n");
+    for mem in memory_examples {
+        ctx.push_str(&format!("- {}\n", mem));
+    }
+    ctx
 }
 
 #[derive(Debug, Clone)]

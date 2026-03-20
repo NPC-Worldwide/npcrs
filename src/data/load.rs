@@ -51,6 +51,8 @@ fn extract_pdf_text(path: &str) -> String {
         .unwrap_or_else(|| format!("[PDF extraction failed for {}]", path))
 }
 
+pub fn load_txt(path: &str) -> Result<String> { std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e }) }
+
 pub fn load_csv(path: &str) -> Result<String> { std::fs::read_to_string(path).map_err(|e| NpcError::FileLoad { path: path.into(), source: e }) }
 
 pub fn load_json(path: &str) -> Result<String> {

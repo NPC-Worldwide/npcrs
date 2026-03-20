@@ -1,17 +1,10 @@
-use crate::error::Result;
 use crate::error::{NpcError, Result};
-use crate::npc_compiler::*;
-use crate::npc_compiler::Jinx;
-use crate::npc_compiler::Npc;
-use crate::r#gen::ToolDef;
 use crate::r#gen::{Message, ToolDef, LlmResponse};
-use crate::r#gen::{Message, ToolDef};
 use crate::tools::{RegisteredTool, ToolBuilder, ToolRegistry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
-use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::process::Command;
 use walkdir::WalkDir;
@@ -853,7 +846,7 @@ impl Jinx {
         input_values: &std::collections::HashMap<String, String>,
     ) -> crate::npc_compiler::JinxResult {
         let mut output = String::new();
-        let mut context = std::collections::HashMap::new();
+        let mut context: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
         let mut success = true;
 
         for step in &self.steps {
@@ -1619,7 +1612,7 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "npc") {
-            match super::load_npc_from_file(path) {
+            match load_npc_from_file(path) {
                 Ok(mut loaded_npc) => {
                     if loaded_npc.model.is_none() {
                         loaded_npc.model = team.model.clone();
@@ -1638,12 +1631,12 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
 
     let jinxes_dir = dir.join("jinxes");
     if jinxes_dir.exists() {
-        team.jinxes = super::load_jinxes_from_directory(&jinxes_dir)?;
+        team.jinxes = load_jinxes_from_directory(&jinxes_dir)?;
     }
 
     let legacy_dir = dir.join("jinxs");
     if legacy_dir.exists() && !jinxes_dir.exists() {
-        team.jinxes = super::load_jinxes_from_directory(&legacy_dir)?;
+        team.jinxes = load_jinxes_from_directory(&legacy_dir)?;
     }
 
     let project_root = dir.parent().unwrap_or(dir);

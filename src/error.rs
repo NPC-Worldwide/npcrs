@@ -38,6 +38,9 @@ pub enum NpcError {
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 
+    #[error("Sqlx error: {0}")]
+    Sqlx(#[from] sqlx::Error),
+
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 

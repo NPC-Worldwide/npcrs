@@ -20,6 +20,9 @@ tera = "1"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
 
 # HTTP client for LLM APIs
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "multipart"], default-features = false }
@@ -44,6 +47,7 @@ pin-project-lite = "0.2"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "postgres", "mysql", "chrono", "uuid"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Knowledge graph
 petgraph = "0.7"
@@ -70,10 +74,12 @@ tokio-stream = "0.1"
 
 # Regex for command parsing
 regex = "1"
+async-recursion = "1"
 
 
 # Shell expansion (~ paths)
 shellexpand = "3"
+dirs = "6"
 
 # For reading dirs
 walkdir = "2"

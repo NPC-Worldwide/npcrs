@@ -19,6 +19,11 @@ pub mod npc_array;       // Vectorized inference — mirrors npcpy.npc_array
 pub mod llm_funcs;       // High-level LLM functions — mirrors npcpy.llm_funcs
 pub mod npc_sysenv;      // System environment — mirrors npcpy.npc_sysenv
 
+pub mod streaming;
+pub mod build_funcs;
+pub mod init;
+pub mod launcher;
+pub mod plugin_setup;
 pub mod mcp;
 pub mod template;
 pub mod serve;
@@ -27,6 +32,7 @@ pub mod shell;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 
+pub mod db;
 pub mod error;
 
 pub use npc_compiler::{Npc, Team, Jinx, Agent, ToolAgent, CodingAgent};
