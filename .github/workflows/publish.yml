@@ -1,0 +1,28 @@
+name: Publish npcrs to crates.io
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Read VERSION
+        id: version
+        run: echo "version=$(cat npcrs/VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+
+      - name: Patch Cargo.toml version
+        run: sed -i "s/^version = \"0.0.0\"/version = \"${{ steps.version.outputs.version }}\"/" npcrs/Cargo.toml
+
+      - name: Publish npcrs
+        working-directory: npcrs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --no-default-features --features ffi
