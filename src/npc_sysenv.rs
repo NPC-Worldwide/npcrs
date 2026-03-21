@@ -267,29 +267,41 @@ pub fn get_system_message(npc: Option<&NPC>, tool_capable: bool, team_context: O
             msg.push_str("\nUse the provided function calling interface to invoke tools when they are relevant to the request. For multi-step tasks, call one tool at a time and use its result to inform the next step.\n");
         } else {
             let jinx_names: Vec<&str> = jinxes.keys().map(|s| s.as_str()).collect();
+            let jinx_names_str = jinx_names.join(", ");
             msg.push_str(&format!(
-                "\nif you are in the [ReAct loop] and you are asked to use jinxes, refer to these guidelines:\n\
-                [BEGIN GUIDELINES FOR JINX EXECUTION]\n\
-                Use jinxes when appropriate. For example:\n\
-                - If you are asked about something up-to-date or dynamic\n\
-                - If the user asks you to read or edit a file\n\
-                - If the user asks for code that should be executed\n\
-                - If the user requests to open, search, download or scrape\n\
-                - If they request a screenshot, audio, or image manipulation\n\
-                - Situations requiring file parsing\n\
-                - Scripted workflows or pipelines\n\n\
-                You do not need to use a jinx if:\n\
-                - the user asks a simple question that only requires general knowledge\n\
-                - The user asks you to write them a story (unless they specify saving to a file)\n\n\
-                To invoke a jinx, return:\n\
-                {{\n\
-                    \"action\": \"invoke_jinx\",\n\
-                    \"jinx_name\": \"jinx_name_here\",\n\
-                    \"explanation\": \"detailed explanation\"\n\
-                }}\n\n\
-                Do not invent jinx names. Use only: [{}]\n\
-                [END GUIDELINES FOR JINX EXECUTION]\n",
-                jinx_names.join(", ")
+                "\n                if you are in the [ReAct loop] and you are asked to use jinxes, refer to these guidelines:\n\
+              [BEGIN GUIDELINES FOR JINX EXECUTION]\n\
+                  Use jinxes when appropriate. For example:\n\
+                    \n\
+                    - If you are asked about something up-to-date or dynamic (e.g., latest exchange rates)\n\
+                    - If the user asks you to read or edit a file\n\
+                    - If the user asks for code that should be executed\n\
+                    - If the user requests to open, search, download or scrape, which involve actual system or web actions\n\
+                    - If they request a screenshot, audio, or image manipulation\n\
+                    - Situations requiring file parsing (e.g., CSV or JSON loading)\n\
+                    - Scripted workflows or pipelines, e.g., generate a chart, fetch data, summarize from source, etc.\n\
+                    \n\
+                    You MUST use a jinx if the request directly refers to a tool the AI cannot handle directly (e.g., 'run', 'open', 'search', etc).\n\
+                    \n\
+                    You do not need to use a jinx if:\n\n\
+                    - the user asks a simple question like 'what is 2+2' or 'who invented linux', essentially any question which only requires general knowledge.\n\
+                    - The user asks you to write them a story (unless they separately specify saving it to a file, then you should directly write the story to be output through a jinx to said file.)\n\
+                    To invoke a jinx, return the action 'invoke_jinx' along with the jinx specific name.\n\
+                    An example for a jinx-specific return would be:\n\
+                    {{\n\
+                        \"action\": \"invoke_jinx\",\n\
+                        \"jinx_name\": \"file_reader\",\n\
+                        \"explanation\": \"Read the contents of <full_filename_path_from_user_request> and <detailed explanation of how to accomplish the problem outlined in the request>.\"\n\
+                    }}\n\
+                    \n\
+                    \n\
+                    Do not use the jinx names as the action keys. You must use the action 'invoke_jinx' to invoke a jinx!\n\
+                    Do not invent jinx names. Use only those provided.\n\
+                  \n\
+                \n\
+                Respond with a single JSON object only.\n\
+                To use a jinx, set action to jinx, jinx_name to one of [{jinx_names_str}], and inputs with the required parameters.\n\n\
+              [END GUIDELINES FOR JINX EXECUTION]\n",
             ));
         }
     }

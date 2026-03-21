@@ -39,6 +39,123 @@ pub struct Kernel {
     pub history: CommandHistory,
 
     pub boot_time: chrono::DateTime<chrono::Utc>,
+
+    pub python_daemon: Option<PythonDaemon>,
+}
+
+pub struct PythonDaemon {
+    child: tokio::process::Child,
+    stdin: tokio::process::ChildStdin,
+    stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
+}
+
+impl PythonDaemon {
+    pub async fn spawn(team_dir: &str, db_path: &str) -> Result<Self> {
+        use tokio::process::Command;
+        use tokio::io::BufReader;
+
+        let mut child = Command::new("python3")
+            .arg("-c")
+            .arg(format!(
+                r#"
+import sys, json, os
+os.environ.setdefault('NPCSH_DB_PATH', '{}')
+sys.path.insert(0, os.getcwd())
+from npcsh._state import setup_shell, execute_slash_command, ShellState, initial_state
+from npcsh.routes import router, CommandRouter
+command_history, team, npc = setup_shell()
+from npcsh._state import initialize_router_with_jinxes
+initialize_router_with_jinxes(team, router)
+state = initial_state
+state.team = team
+state.npc = npc
+state.command_history = command_history
+sys.stderr.write('npcsh-daemon: ready\n')
+sys.stderr.flush()
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        req = json.loads(line)
+        cmd = req.get('command', '')
+        stdin_input = req.get('stdin_input')
+        state, result = execute_slash_command(cmd, stdin_input, state, False, router)
+        if isinstance(result, dict):
+            output = result.get('output', '')
+        else:
+            output = str(result) if result else ''
+        resp = json.dumps({{"output": str(output), "ok": True}})
+    except Exception as e:
+        resp = json.dumps({{"output": f"Error: {{e}}", "ok": False}})
+    print(resp, flush=True)
+"#,
+                db_path
+            ))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| NpcError::Other(format!("Failed to spawn Python daemon: {}", e)))?;
+
+        let stdin = child.stdin.take().ok_or_else(|| NpcError::Other("No stdin on daemon".into()))?;
+        let stdout = child.stdout.take().ok_or_else(|| NpcError::Other("No stdout on daemon".into()))?;
+        let mut stderr = child.stderr.take().ok_or_else(|| NpcError::Other("No stderr on daemon".into()))?;
+
+        use tokio::io::AsyncBufReadExt;
+        let mut stderr_reader = BufReader::new(stderr);
+        let mut found_ready = false;
+        for _ in 0..50 {
+            let mut line = String::new();
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                stderr_reader.read_line(&mut line)
+            ).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(_)) => {
+                    if line.contains("ready") {
+                        found_ready = true;
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        if !found_ready {
+            return Err(NpcError::Other("Daemon failed to start: never sent ready signal".into()));
+        }
+
+        Ok(Self {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        })
+    }
+
+    pub async fn execute(&mut self, command: &str, stdin_input: Option<&str>) -> Result<String> {
+        use tokio::io::{AsyncWriteExt, AsyncBufReadExt};
+
+        let req = serde_json::json!({
+            "command": command,
+            "stdin_input": stdin_input,
+        });
+        let mut line = serde_json::to_string(&req).unwrap_or_default();
+        line.push('\n');
+
+        self.stdin.write_all(line.as_bytes()).await
+            .map_err(|e| NpcError::Other(format!("Daemon write: {}", e)))?;
+        self.stdin.flush().await
+            .map_err(|e| NpcError::Other(format!("Daemon flush: {}", e)))?;
+
+        let mut resp_line = String::new();
+        self.stdout.read_line(&mut resp_line).await
+            .map_err(|e| NpcError::Other(format!("Daemon read: {}", e)))?;
+
+        let resp: serde_json::Value = serde_json::from_str(&resp_line)
+            .map_err(|e| NpcError::Other(format!("Daemon parse: {} (raw: {})", e, resp_line.trim())))?;
+
+        Ok(resp.get("output").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    }
 }
 
 impl Kernel {
@@ -163,7 +280,7 @@ impl Kernel {
         use crate::r#gen::sanitize::sanitize_messages;
         use crate::r#gen::cost::calculate_cost;
 
-        let (model, provider, system, api_url, npc_name, mut tool_defs, executors) = {
+        let (model, provider, system, api_url, npc_name, active_npc, mut tool_defs, executors) = {
             let process = self.processes.get_mut(&pid).ok_or_else(|| {
                 NpcError::Other(format!("No process with pid {}", pid))
             })?;
@@ -182,13 +299,14 @@ impl Kernel {
             let system = process.npc.system_prompt(self.team.context.as_deref());
             let api_url = process.npc.api_url.clone();
             let npc_name = process.npc.name.clone();
+            let active_npc = process.npc.clone();
 
             if !process.capabilities.is_superuser && !process.capabilities.allowed_jinxes.is_empty() {
                 let mut td = td;
                 td.retain(|t| process.capabilities.allowed_jinxes.contains(&t.function.name));
-                (model, provider, system, api_url, npc_name, td, ex)
+                (model, provider, system, api_url, npc_name, active_npc, td, ex)
             } else {
-                (model, provider, system, api_url, npc_name, td, ex)
+                (model, provider, system, api_url, npc_name, active_npc, td, ex)
             }
         };
 
@@ -197,18 +315,30 @@ impl Kernel {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".to_string());
-        let platform_info = format!("Platform: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
-        let context_info = format!("The current working directory is: {}\n{}", cwd, platform_info);
+        let path_cmd = format!("The current working directory is: {}", cwd);
+        let ls_files = if let Ok(entries) = std::fs::read_dir(&cwd) {
+            let files: Vec<String> = entries.flatten().take(100)
+                .map(|e| e.path().to_string_lossy().to_string())
+                .collect();
+            let total = std::fs::read_dir(&cwd).map(|d| d.count()).unwrap_or(0);
+            let mut listing = format!("Files in the current directory (full paths):\n{}", files.join("\n"));
+            if total > 100 {
+                listing.push_str(&format!("\n... and {} more files", total - 100));
+            }
+            listing
+        } else {
+            "No files found in the current directory.".to_string()
+        };
+        let platform_info = format!("Platform: {} {} ({})", std::env::consts::OS, "", std::env::consts::ARCH);
+        let context_info = format!("{}\n{}\n{}", path_cmd, ls_files, platform_info);
 
         let tool_guidance = if tools.is_some() {
             let tool_names: Vec<&str> = tool_defs.iter().map(|t| t.function.name.as_str()).collect();
             format!(
-                "\nYou have access to these tools: {}. Call tools via the function calling interface.\n\
-                 Use tools when you need to take action (run commands, search, edit files, etc.). \
-                 Use chat to respond to the user. Use stop when you are done. \
-                 Do not call the same tool twice with the same arguments.\n\
-                 Do not call stop without first calling chat to deliver a response to the user.\n\
-                 The user can see tool outputs directly. Do not re-write or repeat them in your chat response.",
+                "\nYou have access to these tools: {}. Call tools via the function calling interface.\n\n\
+Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user. Use stop when you are done. Do not call the same tool twice with the same arguments.\n\
+Do not call stop without first calling chat to deliver a response to the user.\n\
+The user can see tool outputs directly. Do not re-write or repeat them in your chat response — just reference the relevant parts.",
                 tool_names.join(", ")
             )
         } else {
@@ -277,7 +407,35 @@ impl Kernel {
                     process.messages.push(response.message.clone());
                 }
 
-                let called: Vec<&str> = tool_calls.iter().map(|tc| tc.function.name.as_str()).collect();
+                if let Some(ref text) = response.message.content {
+                    if !text.is_empty() {
+                        eprintln!("\x1b[90m  [iter {}] thinking:\x1b[0m {}", iteration + 1, text);
+                    }
+                }
+                let called: Vec<String> = tool_calls.iter().map(|tc| {
+                    let schema_params: Vec<String> = tool_defs.iter()
+                        .find(|td| td.function.name == tc.function.name)
+                        .and_then(|td| td.function.parameters.get("properties"))
+                        .and_then(|p| p.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default();
+                    let filtered = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
+                        if let Some(obj) = parsed.as_object() {
+                            let clean: serde_json::Map<String, serde_json::Value> = if schema_params.is_empty() {
+                                obj.clone()
+                            } else {
+                                obj.iter().filter(|(k, _)| schema_params.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect()
+                            };
+                            serde_json::to_string(&clean).unwrap_or_default()
+                        } else {
+                            tc.function.arguments.clone()
+                        }
+                    } else {
+                        tc.function.arguments.clone()
+                    };
+                    let preview = if filtered.len() > 200 { format!("{}...", &filtered[..200]) } else { filtered };
+                    format!("{}({})", tc.function.name, preview)
+                }).collect();
                 eprintln!("\x1b[90m  [iter {}] tools: {}\x1b[0m", iteration + 1, called.join(", "));
 
                 let tc_info: Vec<(String, String, String)> = tool_calls.iter()
@@ -309,7 +467,7 @@ impl Kernel {
                     let args: HashMap<String, String> =
                         serde_json::from_str(tc_args_str).unwrap_or_default();
 
-                    let tool_result = self.execute_tool(tc_name, &args, &executors).await;
+                    let tool_result = self.execute_tool(tc_name, &args, &executors, &active_npc).await;
 
                     eprintln!("\x1b[36m\n⚡ {}:\x1b[0m", tc_name);
                     let preview = if tool_result.len() > 500 {
@@ -357,6 +515,7 @@ impl Kernel {
         name: &str,
         args: &HashMap<String, String>,
         executors: &HashMap<String, crate::npc_compiler::ToolExecutor>,
+        active_npc: &crate::npc_compiler::NPC,
     ) -> String {
         match name {
             "sh" => {
@@ -451,7 +610,7 @@ impl Kernel {
                 match executors.get(name) {
                     Some(crate::npc_compiler::ToolExecutor::Jinx(jname)) => {
                         if let Some(j) = self.jinxes.get(jname) {
-                            match npc_compiler::execute_jinx(j, args, &self.jinxes).await {
+                            match npc_compiler::execute_jinx_with_npc(j, args, &self.jinxes, Some(active_npc)).await {
                                 Ok(r) => r.output,
                                 Err(e) => format!("Jinx error: {}", e),
                             }

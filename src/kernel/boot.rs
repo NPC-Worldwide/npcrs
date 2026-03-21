@@ -40,14 +40,18 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
         ipc: IpcBus::new(),
         scheduler: Scheduler::new(),
         history,
+        python_daemon: None,
         boot_time: chrono::Utc::now(),
     };
 
-    let init_npc = kernel
+    let team_box = Box::new(kernel.team.clone());
+
+    let mut init_npc = kernel
         .team
         .lead_npc()
         .cloned()
         .unwrap_or_else(|| crate::npc_compiler::NPC::new("init", "You are the init process. Coordinate the system."));
+    init_npc.team = Some(team_box.clone());
 
     kernel.spawn_init(init_npc);
     tracing::info!("kernel: init process spawned (pid 0)");
@@ -60,7 +64,8 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
         .cloned()
         .collect();
 
-    for npc in other_npcs {
+    for mut npc in other_npcs {
+        npc.team = Some(team_box.clone());
         let name = npc.name.clone();
         let pid = kernel.spawn(npc, 0, Capabilities::root());
         tracing::info!("kernel: spawned daemon {} (pid {})", name, pid);

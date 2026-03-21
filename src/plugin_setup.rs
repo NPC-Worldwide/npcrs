@@ -1,10 +1,6 @@
 use crate::error::{NpcError, Result};
 use std::path::{Path, PathBuf};
 
-fn get_active_npc() -> Option<String> {
-    std::env::var("NPCSH_ACTIVE_NPC").ok()
-}
-
 fn write_file(path: &Path, content: &str, executable: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| NpcError::Shell(format!("mkdir: {}", e)))?;

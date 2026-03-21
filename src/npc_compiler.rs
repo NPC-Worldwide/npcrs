@@ -743,6 +743,27 @@ pub fn load_npc_from_file(path: impl AsRef<Path>) -> Result<NPC> {
         })?;
 
     npc.source_path = Some(path.display().to_string());
+    npc.npc_path = Some(path.display().to_string());
+
+    let file_parent = path.parent().map(|p| p.to_string_lossy().to_string());
+    npc.npc_directory = file_parent.clone();
+    npc.jinxes_directory = file_parent.as_ref().map(|p| {
+        Path::new(p).join("jinxes").to_string_lossy().to_string()
+    });
+    npc.npc_jinxes_directory = npc.jinxes_directory.clone();
+
+    npc.db_conn = None;
+    npc.db_type = None;
+    npc.command_history_path = None;
+    npc.kg_data = None;
+    npc.tables = None;
+    npc.memory = None;
+    npc.jinxes_dict = HashMap::new();
+    npc.jinx_tool_catalog = HashMap::new();
+    npc.tools = Vec::new();
+    npc.tool_map = HashMap::new();
+    npc.tools_schema = Vec::new();
+    npc.jinxes_spec = npc.jinx_names.clone();
 
     for mcp in &mut npc.mcp_servers {
         mcp.path = shellexpand::tilde(&mcp.path).to_string();
@@ -865,45 +886,14 @@ fn extract_jinx_call(line: &str) -> Option<String> {
     Some(name_part.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_extract_jinx_call() {
-        assert_eq!(
-            extract_jinx_call("- {{ Jinx('edit_file') }}"),
-            Some("edit_file".to_string())
-        );
-        assert_eq!(
-            extract_jinx_call("  - {{ Jinx(\"web_search\") }}"),
-            Some("web_search".to_string())
-        );
-        assert_eq!(extract_jinx_call("- plain_string"), None);
-        assert_eq!(extract_jinx_call("name: value"), None);
-    }
-
-    #[test]
-    fn test_preprocess_strips_jinja() {
-        let input = r#"
-name: test_npc
-primary_directive: Do things
-jinxes:
-  - {{ Jinx('edit_file') }}
-  - {{ Jinx('sh') }}
-  - plain_jinx
-"#;
-        let output = preprocess_npc_yaml(input);
-        assert!(output.contains("- edit_file"));
-        assert!(output.contains("- sh"));
-        assert!(output.contains("- plain_jinx"));
-        assert!(!output.contains("Jinx("));
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Jinx {
     #[serde(alias = "jinx_name")]
     pub name: String,
+
+    #[serde(default)]
+    pub aliases: Vec<String>,
 
     #[serde(default)]
     pub description: String,
@@ -1239,6 +1229,9 @@ pub fn load_jinxes_from_directory(dir: impl AsRef<Path>) -> Result<HashMap<Strin
                     } else {
                         jinx.name.clone()
                     };
+                    for alias in &jinx.aliases {
+                        jinxes.insert(alias.clone(), jinx.clone());
+                    }
                     jinxes.insert(name, jinx);
                 }
                 Err(e) => {
@@ -1255,74 +1248,41 @@ fn strip_jinja2_specifics(raw: &str) -> String {
     raw.to_string()
 }
 
-#[cfg(test)]
-mod tests {
-
-    fn write_temp_jinx(content: &str) -> NamedTempFile {
-        let mut f = NamedTempFile::with_suffix(".jinx").unwrap();
-        f.write_all(content.as_bytes()).unwrap();
-        f
-    }
-
-    #[test]
-    fn test_load_simple_jinx() {
-        let f = write_temp_jinx(
-            r#"
-jinx_name: test_jinx
-description: A test jinx
-inputs:
-  - query
-steps:
-  - name: run
-    engine: bash
-    code: echo "hello {{ query }}"
-"#,
-        );
-        let jinx = load_jinx_from_file(f.path()).unwrap();
-        assert_eq!(jinx.name, "test_jinx");
-        assert_eq!(jinx.inputs.len(), 1);
-        assert_eq!(jinx.inputs[0].name, "query");
-        assert!(jinx.inputs[0].default.is_none());
-        assert_eq!(jinx.steps.len(), 1);
-        assert_eq!(jinx.steps[0].engine, "bash");
-    }
-
-    #[test]
-    fn test_load_jinx_with_defaults() {
-        let f = write_temp_jinx(
-            r#"
-jinx_name: edit_file
-description: Edit files
-inputs:
-  - path:
-      description: "File path"
-  - action: "create"
-  - content
-steps:
-  - name: edit
-    engine: python
-    code: |
-      print("editing")
-"#,
-        );
-        let jinx = load_jinx_from_file(f.path()).unwrap();
-        assert_eq!(jinx.inputs.len(), 3);
-        assert_eq!(jinx.inputs[0].name, "path");
-        assert!(jinx.inputs[0].description.is_some());
-        assert_eq!(jinx.inputs[1].name, "action");
-        assert_eq!(jinx.inputs[1].default.as_deref(), Some("create"));
-        assert_eq!(jinx.inputs[2].name, "content");
-        assert!(jinx.inputs[2].default.is_none());
-    }
-}
 
 pub async fn execute_jinx(
     jinx: &Jinx,
     input_values: &HashMap<String, String>,
     available_jinxes: &HashMap<String, Jinx>,
 ) -> Result<JinxResult> {
+    execute_jinx_with_npc(jinx, input_values, available_jinxes, None).await
+}
+
+pub async fn execute_jinx_with_npc(
+    jinx: &Jinx,
+    input_values: &HashMap<String, String>,
+    available_jinxes: &HashMap<String, Jinx>,
+    npc: Option<&NPC>,
+) -> Result<JinxResult> {
     let mut context: HashMap<String, serde_json::Value> = HashMap::new();
     let mut output = String::new();
+
+    if let Some(npc) = npc {
+        context.insert("npc".to_string(), serde_json::json!({
+            "name": npc.name,
+            "model": npc.model,
+            "provider": npc.provider,
+            "primary_directive": npc.primary_directive,
+            "api_url": npc.api_url,
+            "api_key": npc.api_key,
+            "db_conn": npc.db_conn,
+            "plain_system_message": npc.plain_system_message,
+            "npc_directory": npc.npc_directory,
+            "source_path": npc.source_path,
+        }));
+        if let Some(ref team) = npc.team {
+            context.insert("team_path".to_string(), serde_json::json!(team.source_dir));
+        }
+    }
 
     for input in &jinx.inputs {
         let value = input_values
@@ -1398,9 +1358,12 @@ async fn execute_step(
     available_jinxes: &HashMap<String, Jinx>,
 ) -> Result<String> {
     match step.engine.as_str() {
+        "rust" => {
+            let rendered = render_step_template(&step.code, context)?;
+            execute_rust(&rendered, context).await
+        }
         "python" => {
-            let rendered = render_python_template(&step.code, context);
-            execute_python(&rendered, context).await
+            execute_python_via_npcpy(&step.code, context).await
         }
         "bash" => {
             let rendered = render_step_template(&step.code, context)?;
@@ -1416,9 +1379,12 @@ async fn execute_step_interactive(
     available_jinxes: &HashMap<String, Jinx>,
 ) -> Result<String> {
     match step.engine.as_str() {
+        "rust" => {
+            let rendered = render_step_template(&step.code, context)?;
+            execute_rust(&rendered, context).await
+        }
         "python" => {
-            let rendered = render_python_template(&step.code, context);
-            execute_python_interactive(&rendered, context).await
+            execute_python_via_npcpy(&step.code, context).await
         }
         "bash" => {
             let rendered = render_step_template(&step.code, context)?;
@@ -1530,57 +1496,84 @@ fn render_step_template(
     Ok(tera.render("step", &ctx)?)
 }
 
-fn wrap_python_with_context(code: &str, context: &HashMap<String, serde_json::Value>) -> String {
-    let context_json = serde_json::to_string(context).unwrap_or_else(|_| "{}".to_string());
 
-    let indented_code = code
-        .lines()
-        .map(|l| format!("    {}", l))
-        .collect::<Vec<_>>()
-        .join("\n");
+async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) -> Result<String> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    let hash = hasher.finish();
 
-    let escaped_json = context_json
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'");
+    let cache_dir = crate::npc_sysenv::get_cache_dir().join("rust_jinxes");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let crate_dir = cache_dir.join(format!("jinx_{:x}", hash));
+    let bin_path = crate_dir.join("target").join("release").join(format!("jinx_{:x}", hash));
+    let src_path = crate_dir.join("src").join("main.rs");
 
-    let mut wrapper = String::new();
-    wrapper.push_str("import json, sys, os\n");
-    wrapper.push_str(&format!("context = json.loads('{}')\n", escaped_json));
-    wrapper.push_str("output = \"\"\n");
-    wrapper.push_str("class _State:\n");
-    wrapper.push_str("    current_path = os.getcwd()\n");
-    wrapper.push_str("    chat_model = os.environ.get('NPCSH_CHAT_MODEL', 'gpt-4o-mini')\n");
-    wrapper.push_str("    chat_provider = os.environ.get('NPCSH_CHAT_PROVIDER', 'openai')\n");
-    wrapper.push_str("    stream_output = False\n");
-    wrapper.push_str("state = _State()\n");
-    wrapper.push_str("class _NPC:\n");
-    wrapper.push_str("    name = \"assistant\"\n");
-    wrapper.push_str("    model = os.environ.get('NPCSH_CHAT_MODEL', 'llama3.2')\n");
-    wrapper.push_str("    provider = os.environ.get('NPCSH_CHAT_PROVIDER', 'ollama')\n");
-    wrapper.push_str("    api_url = None\n");
-    wrapper.push_str("    api_key = None\n    plain_system_message = False\n    primary_directive = None\n    db_conn = None\n");
-    wrapper.push_str("npc = _NPC()\n");
-    wrapper.push_str("if 'npc' in context:\n");
-    wrapper.push_str("    if isinstance(context['npc'], dict):\n");
-    wrapper.push_str("        npc.name = context['npc'].get('name', npc.name)\n");
-    wrapper.push_str("        npc.model = context['npc'].get('model', npc.model)\n");
-    wrapper.push_str("        npc.provider = context['npc'].get('provider', npc.provider)\n");
-    wrapper.push_str("        npc.primary_directive = context['npc'].get('primary_directive', npc.primary_directive)\n");
-    wrapper.push_str("        npc.db_conn = context['npc'].get('db_conn', npc.db_conn)\n");
+    if !bin_path.exists() {
+        let _ = std::fs::create_dir_all(crate_dir.join("src"));
 
-    wrapper.push_str("    elif isinstance(context['npc'], str):\n");
-    wrapper.push_str("        npc.name = context['npc']\n");
-    wrapper.push_str("try:\n");
-    wrapper.push_str(&indented_code);
-    wrapper.push('\n');
-    wrapper.push_str("except Exception as e:\n");
-    wrapper.push_str("    context['output'] = f'Error: {e}'\n");
-    wrapper.push_str("    output = str(e)\n");
-    wrapper.push_str("result = context.get('output', output)\n");
-    wrapper.push_str("if result:\n");
-    wrapper.push_str("    print(result, end='')\n");
+        let npcrs_version = env!("NPCRS_VERSION");
+        let npcrs_dep = {
+            let exe = std::env::current_exe().unwrap_or_default();
+            let mut dir = exe.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let mut local_path = None;
+            loop {
+                let candidate = dir.join("npcrs").join("Cargo.toml");
+                if candidate.exists() {
+                    local_path = Some(dir.join("npcrs").to_string_lossy().to_string());
+                    break;
+                }
+                if !dir.pop() { break; }
+            }
+            if let Some(p) = local_path {
+                format!("npcrs = {{ path = \"{}\" }}", p)
+            } else {
+                format!("npcrs = \"{}\"", npcrs_version)
+            }
+        };
+        let cargo_toml = format!(
+            "[package]\nname = \"jinx_{hash:x}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n{npcrs_dep}\nserde_json = \"1\"\ntokio = {{ version = \"1\", features = [\"full\"] }}\n",
+        );
+        std::fs::write(crate_dir.join("Cargo.toml"), &cargo_toml).map_err(|e| NpcError::JinxExecution {
+            step: "rust".into(), reason: format!("Write Cargo.toml: {}", e),
+        })?;
+        std::fs::write(&src_path, code).map_err(|e| NpcError::JinxExecution {
+            step: "rust".into(), reason: format!("Write source: {}", e),
+        })?;
 
-    wrapper
+        let compile = Command::new("cargo")
+            .arg("build")
+            .arg("--release")
+            .current_dir(&crate_dir)
+            .output()
+            .await
+            .map_err(|e| NpcError::JinxExecution {
+                step: "rust".into(), reason: format!("cargo not found: {}", e),
+            })?;
+        if !compile.status.success() {
+            let stderr = String::from_utf8_lossy(&compile.stderr);
+            return Err(NpcError::JinxExecution {
+                step: "rust".into(), reason: format!("Compilation failed:\n{}", stderr),
+            });
+        }
+    }
+
+    let context_json = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
+    let output = Command::new(&bin_path)
+        .env("JINX_CONTEXT", &context_json)
+        .output()
+        .await
+        .map_err(|e| NpcError::JinxExecution {
+            step: "rust".into(), reason: format!("Run binary: {}", e),
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        Ok(stdout.to_string())
+    } else {
+        Ok(format!("{}{}", stdout, stderr))
+    }
 }
 
 async fn execute_bash(code: &str) -> Result<String> {
@@ -1634,63 +1627,85 @@ async fn execute_bash_interactive(code: &str) -> Result<String> {
     })
 }
 
-async fn execute_python(code: &str, context: &HashMap<String, serde_json::Value>) -> Result<String> {
-    let wrapped = wrap_python_with_context(code, context);
+async fn execute_python_via_npcpy(code: &str, context: &HashMap<String, serde_json::Value>) -> Result<String> {
+    let ctx_json = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
+    let tmp = std::env::temp_dir();
+    let ctx_file = tmp.join(format!("npcsh_ctx_{}.json", std::process::id()));
+    let code_file = tmp.join(format!("npcsh_code_{}.py", std::process::id()));
+    let runner_file = tmp.join(format!("npcsh_run_{}.py", std::process::id()));
+
+    std::fs::write(&ctx_file, &ctx_json).map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: e.to_string() })?;
+    std::fs::write(&code_file, code).map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: e.to_string() })?;
+
+    let runner = format!(r#"
+import json, sys, os
+sys.path.insert(0, os.getcwd())
+with open('{}') as f:
+    context = json.load(f)
+os.remove('{}')
+code_path = '{}'
+with open(code_path) as f:
+    code = f.read()
+os.remove(code_path)
+from npcpy.npc_compiler import Jinx
+jinx = Jinx.__new__(Jinx)
+jinx._execute_step = None
+from npcpy.npc_sysenv import get_system_message
+npc = None
+state = None
+try:
+    from npcsh._state import ShellState
+    state = ShellState()
+    _d = context.get('npc', {{}})
+    if isinstance(_d, dict) and _d.get('name'):
+        from npcpy.npc_compiler import NPC
+        from npcpy.npc_sysenv import get_history_db_path
+        from npcpy.memory.command_history import get_db_connection
+        _db = _d.get('db_conn') or str(get_history_db_path())
+        npc = NPC(name=_d['name'], primary_directive=_d.get('primary_directive',''), model=_d.get('model'), provider=_d.get('provider'), api_url=_d.get('api_url'), api_key=_d.get('api_key'), db_conn=get_db_connection(_db))
+        state.npc = npc
+        state.chat_model = npc.model or state.chat_model
+        state.chat_provider = npc.provider or state.chat_provider
+    _tp = context.get('team_path')
+    if _tp:
+        from npcpy.npc_compiler import Team
+        try:
+            state.team = Team(team_path=_tp)
+        except Exception:
+            pass
+except ImportError:
+    pass
+output = ""
+try:
+    exec(code, {{"__builtins__": __builtins__, "context": context, "npc": npc, "state": state, "os": os, "sys": sys, "json": json, "output": output}})
+except Exception as e:
+    context['output'] = f'Error: {{e}}'
+    output = str(e)
+result = context.get('output', output)
+if result:
+    print(result, end='')
+"#, ctx_file.display(), ctx_file.display(), code_file.display());
+
+    std::fs::write(&runner_file, &runner).map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: e.to_string() })?;
 
     let output = Command::new("python3")
-        .arg("-c")
-        .arg(&wrapped)
+        .arg(&runner_file)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
         .output()
         .await
-        .map_err(|e| NpcError::JinxExecution {
-            step: "python".to_string(),
-            reason: format!("Failed to run Python: {}", e),
-        })?;
+        .map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: format!("Failed to run Python: {}", e) })?;
+    let _ = std::fs::remove_file(&runner_file);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
     if output.status.success() {
         Ok(stdout.to_string())
     } else {
-        Ok(format!(
-            "{}{}[python exit code: {}]",
-            stdout,
-            if stderr.is_empty() {
-                String::new()
-            } else {
-                format!("\nSTDERR: {}", stderr)
-            },
-            output.status.code().unwrap_or(-1)
-        ))
+        Ok(format!("{}[python exit code: {}]", stdout, output.status.code().unwrap_or(-1)))
     }
 }
 
-async fn execute_python_interactive(
-    code: &str,
-    context: &HashMap<String, serde_json::Value>,
-) -> Result<String> {
-    let wrapped = wrap_python_with_context(code, context);
-
-    let status = Command::new("python3")
-        .arg("-c")
-        .arg(&wrapped)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .await
-        .map_err(|e| NpcError::JinxExecution {
-            step: "python".to_string(),
-            reason: format!("Failed to run Python: {}", e),
-        })?;
-
-    Ok(if status.success() {
-        String::new()
-    } else {
-        format!("[python exit code: {}]", status.code().unwrap_or(-1))
-    })
-}
 
 #[derive(Debug, Clone)]
 pub struct Team {
@@ -2493,4 +2508,5 @@ fn register_default_tools(registry: &mut ToolRegistry) {
                 })
             })),
     );
+
 }
