@@ -33,7 +33,7 @@ cargo build --release
 ## Usage as library
 
 ```rust
-use npcrs::{Kernel, Npc, Team};
+use npcrs::{Kernel, NPC, Team};
 
 // Boot kernel with a team directory
 let kernel = Kernel::boot("./npc_team", "~/npcsh_history.db")?;

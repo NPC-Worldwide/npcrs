@@ -6,6 +6,7 @@ description = "Rust core for the NPC system — agent kernel, jinx executor, LLM
 license = "MIT"
 repository = "https://github.com/NPC-Worldwide/npcrs"
 homepage = "https://github.com/NPC-Worldwide/npcrs"
+readme = "README.md"
 keywords = ["npc", "ai", "agent", "llm", "shell"]
 categories = ["command-line-utilities", "development-tools"]
 
