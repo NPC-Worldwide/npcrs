@@ -4,8 +4,8 @@ version = "0.0.0"
 edition = "2024"
 description = "Rust core for the NPC system — agent kernel, jinx executor, LLM client"
 license = "MIT"
-repository = "https://github.com/NPC-Worldwide/npc-core"
-homepage = "https://npcpy.readthedocs.io"
+repository = "https://github.com/NPC-Worldwide/npcrs"
+homepage = "https://github.com/NPC-Worldwide/npcrs"
 keywords = ["npc", "ai", "agent", "llm", "shell"]
 categories = ["command-line-utilities", "development-tools"]
 
