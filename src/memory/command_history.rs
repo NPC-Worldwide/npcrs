@@ -3,7 +3,8 @@ use crate::error::Result;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 pub fn generate_message_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -817,6 +818,207 @@ pub struct ConversationMessage {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub cost: Option<String>,
+}
+
+pub fn table_columns(table: &str) -> Option<&'static [&'static str]> {
+    match table {
+        "command_history" => Some(&["timestamp", "command", "subcommands", "output", "location"]),
+        "conversation_history" => Some(&[
+            "message_id","timestamp","conversation_id","role","content","directory_path",
+            "model","provider","npc","team","tool_calls","tool_results","reasoning_content",
+            "parent_message_id","device_id","device_name","params","input_tokens","output_tokens","cost",
+        ]),
+        "jinx_executions" => Some(&[
+            "message_id","jinx_name","input","timestamp","npc","team",
+            "conversation_id","output","status","error_message","duration_ms",
+        ]),
+        "npc_executions" => Some(&[
+            "message_id","input","timestamp","npc","team","conversation_id","model","provider",
+        ]),
+        "message_attachments" => Some(&[
+            "message_id","attachment_name","attachment_type","attachment_size","upload_timestamp","file_path",
+        ]),
+        "compiled_npcs" => Some(&["name","source_path","compiled_content","compiled_at"]),
+        "memory_lifecycle" => Some(&[
+            "message_id","conversation_id","npc","team","directory_path","timestamp",
+            "initial_memory","final_memory","status","model","provider","created_at",
+        ]),
+        "labels" => Some(&["entity_type","entity_id","label","metadata","created_at"]),
+        "npc_memories" => Some(&["npc_name","team_name","content","status","created_at","updated_at"]),
+        "knowledge_graphs" => Some(&["npc_name","team_name","kg_data","generation","created_at","updated_at"]),
+        _ => None,
+    }
+}
+
+fn csv_esc(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn parse_csv_row(row: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let chars: Vec<char> = row.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            i += 1;
+            let mut buf = String::new();
+            while i < chars.len() {
+                if chars[i] == '"' {
+                    if i + 1 < chars.len() && chars[i + 1] == '"' {
+                        buf.push('"');
+                        i += 2;
+                    } else {
+                        i += 1;
+                        break;
+                    }
+                } else {
+                    buf.push(chars[i]);
+                    i += 1;
+                }
+            }
+            fields.push(buf);
+            if i < chars.len() && chars[i] == ',' { i += 1; }
+        } else {
+            let start = i;
+            while i < chars.len() && chars[i] != ',' { i += 1; }
+            fields.push(chars[start..i].iter().collect());
+            if i < chars.len() { i += 1; }
+        }
+    }
+    fields
+}
+
+fn resolve_file_path(base: &Path, table: &str, row: &HashMap<String, String>, ext: &str) -> PathBuf {
+    let ts = row.get("timestamp")
+        .or_else(|| row.get("created_at"))
+        .or_else(|| row.get("compiled_at"))
+        .or_else(|| row.get("upload_timestamp"))
+        .map(|s| s.as_str())
+        .unwrap_or("");
+    let dt = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(ts).map(|d| d.naive_utc()))
+        .unwrap_or_else(|_| Utc::now().naive_utc());
+    let dir_path = row.get("directory_path").or_else(|| row.get("location")).map(|s| s.as_str()).unwrap_or("");
+    let path_part = if dir_path.is_empty() { "_local" } else { dir_path.trim_start_matches('/') };
+    let group_id = row.get("conversation_id")
+        .or_else(|| row.get("npc_name"))
+        .or_else(|| row.get("name"))
+        .or_else(|| row.get("entity_id"))
+        .or_else(|| row.get("message_id"))
+        .map(|s| s.as_str())
+        .unwrap_or("default");
+    base.join(table).join(path_part)
+        .join(dt.format("%Y").to_string())
+        .join(dt.format("%m").to_string())
+        .join(dt.format("%d").to_string())
+        .join(format!("{}.{}", group_id, ext))
+}
+
+pub fn append_row_csv(base_dir: &Path, table: &str, row: &HashMap<String, String>) -> Result<PathBuf> {
+    let columns = table_columns(table).ok_or_else(|| crate::error::NpcError::Other(format!("Unknown table: {}", table)))?;
+    let path = resolve_file_path(base_dir, table, row, "csv");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let exists = path.exists();
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    if !exists {
+        writeln!(file, "{}", columns.join(","))?;
+    }
+    let csv_row: Vec<String> = columns.iter().map(|c| csv_esc(row.get(*c).map(|s| s.as_str()).unwrap_or(""))).collect();
+    writeln!(file, "{}", csv_row.join(","))?;
+    Ok(path)
+}
+
+pub fn load_file_csv(base_dir: &Path, table: &str, group_id: &str) -> Result<Vec<HashMap<String, String>>> {
+    let target = format!("{}.csv", group_id);
+    let table_dir = base_dir.join(table);
+    if !table_dir.exists() { return Ok(vec![]); }
+    match find_file_recursive(&table_dir, &target) {
+        Some(p) => read_csv_to_maps(&p),
+        None => Ok(vec![]),
+    }
+}
+
+pub fn list_files_csv(base_dir: &Path, table: &str, limit: usize) -> Result<Vec<(String, PathBuf)>> {
+    let table_dir = base_dir.join(table);
+    if !table_dir.exists() { return Ok(vec![]); }
+    let mut csvs = Vec::new();
+    collect_files_recursive(&table_dir, "csv", &mut csvs);
+    csvs.sort_by(|a, b| b.cmp(a));
+    csvs.truncate(limit);
+    Ok(csvs.into_iter().map(|p| {
+        let id = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        (id, p)
+    }).collect())
+}
+
+pub fn search_files_csv(base_dir: &Path, table: &str, query: &str, column: &str) -> Result<Vec<HashMap<String, String>>> {
+    let table_dir = base_dir.join(table);
+    if !table_dir.exists() { return Ok(vec![]); }
+    let q = query.to_lowercase();
+    let mut results = Vec::new();
+    let mut csvs = Vec::new();
+    collect_files_recursive(&table_dir, "csv", &mut csvs);
+    for csv_path in csvs {
+        for row in read_csv_to_maps(&csv_path)? {
+            if row.get(column).map(|c| c.to_lowercase().contains(&q)).unwrap_or(false) {
+                results.push(row);
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn collect_files_recursive(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                collect_files_recursive(&p, ext, out);
+            } else if p.extension().and_then(|e| e.to_str()) == Some(ext) {
+                out.push(p);
+            }
+        }
+    }
+}
+
+fn find_file_recursive(dir: &Path, name: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Some(found) = find_file_recursive(&p, name) { return Some(found); }
+            } else if p.file_name().and_then(|n| n.to_str()) == Some(name) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn read_csv_to_maps(path: &Path) -> Result<Vec<HashMap<String, String>>> {
+    let content = std::fs::read_to_string(path)?;
+    let mut lines = content.lines();
+    let headers: Vec<String> = match lines.next() {
+        Some(h) => parse_csv_row(h),
+        None => return Ok(vec![]),
+    };
+    let mut rows = Vec::new();
+    for line in lines {
+        if line.trim().is_empty() { continue; }
+        let fields = parse_csv_row(line);
+        let mut map = HashMap::new();
+        for (i, h) in headers.iter().enumerate() {
+            map.insert(h.clone(), fields.get(i).cloned().unwrap_or_default());
+        }
+        rows.push(map);
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]
