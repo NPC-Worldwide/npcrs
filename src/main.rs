@@ -554,18 +554,23 @@ fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode
 fn print_welcome(kernel: &Kernel) {
     let s = kernel.stats();
 
-    eprintln!("{BOLD}{PURPLE}");
-    eprintln!("  ███╗   ██╗██████╗  ██████╗███████╗██╗  ██╗");
-    eprintln!("  ████╗  ██║██╔══██╗██╔════╝██╔════╝██║  ██║");
-    eprintln!("  ██╔██╗ ██║██████╔╝██║     ███████╗███████║");
-    eprintln!("  ██║╚██╗██║██╔═══╝ ██║     ╚════██║██╔══██║");
-    eprintln!("  ██║ ╚████║██║     ╚██████╗███████║██║  ██║");
-    eprintln!("  ╚═╝  ╚═══╝╚═╝      ╚═════╝╚══════╝╚═╝  ╚═╝");
-    eprintln!("{RESET}");
-    eprintln!(
-        "  {BOLD}npcsh-rs{RESET} v{} — NPC Operating System Shell",
-        env!("CARGO_PKG_VERSION")
-    );
+    let blue = "\x1b[1;94m";
+    let rust = "\x1b[1;38;5;202m";
+    eprintln!();
+    eprintln!("{blue}___________________________________________{RESET}");
+    eprintln!();
+    eprintln!("  Welcome to {blue}npc{RESET}{rust}sh{RESET}!");
+    eprintln!("{blue}                    {RESET}{rust}        _       \\{RESET}");
+    eprintln!("{blue} _ __   _ __    ___ {RESET}{rust}  ___  | |___    \\{RESET}");
+    eprintln!("{blue}| '_ \\ | '_ \\  / __|{RESET}{rust} / __/ | |_ _|    \\{RESET}");
+    eprintln!("{blue}| | | || |_) |( |__ {RESET}{rust} \\_  \\ | | | |    //{RESET}");
+    eprintln!("{blue}|_| |_|| .__/  \\___/{RESET}{rust} |___/ |_| |_|   //{RESET}");
+    eprintln!("       {blue}|🤖|          {RESET}{rust}               //{RESET}");
+    eprintln!("       {blue}|🤖|{RESET}");
+    eprintln!("       {blue}|🤖|{RESET}");
+    eprintln!("{rust}___________________________________________{RESET}");
+    eprintln!();
+    eprintln!("  {BOLD}npcsh{RESET} v{} (rust)", env!("CARGO_PKG_VERSION"));
     eprintln!(
         "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",
         s.total_processes, s.jinx_count
