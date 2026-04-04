@@ -1,4 +1,3 @@
-
 mod boot;
 mod syscall;
 
@@ -7,14 +6,14 @@ pub use syscall::*;
 
 use crate::drivers::DriverManager;
 use crate::error::{NpcError, Result};
-use crate::ipc::IpcBus;
-use crate::npc_compiler::{self, Jinx};
 use crate::r#gen::Message;
+use crate::ipc::IpcBus;
 use crate::memory::CommandHistory;
 use crate::npc_compiler::NPC;
+use crate::npc_compiler::Team;
+use crate::npc_compiler::{self, Jinx};
 use crate::process::{Capabilities, Pid, Process, ProcessState};
 use crate::scheduler::Scheduler;
-use crate::npc_compiler::Team;
 use crate::vfs::Vfs;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -51,8 +50,8 @@ pub struct PythonDaemon {
 
 impl PythonDaemon {
     pub async fn spawn(team_dir: &str, db_path: &str) -> Result<Self> {
-        use tokio::process::Command;
         use tokio::io::BufReader;
+        use tokio::process::Command;
 
         let mut child = Command::new("python3")
             .arg("-c")
@@ -98,9 +97,18 @@ for line in sys.stdin:
             .spawn()
             .map_err(|e| NpcError::Other(format!("Failed to spawn Python daemon: {}", e)))?;
 
-        let stdin = child.stdin.take().ok_or_else(|| NpcError::Other("No stdin on daemon".into()))?;
-        let stdout = child.stdout.take().ok_or_else(|| NpcError::Other("No stdout on daemon".into()))?;
-        let mut stderr = child.stderr.take().ok_or_else(|| NpcError::Other("No stderr on daemon".into()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| NpcError::Other("No stdin on daemon".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| NpcError::Other("No stdout on daemon".into()))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| NpcError::Other("No stderr on daemon".into()))?;
 
         use tokio::io::AsyncBufReadExt;
         let mut stderr_reader = BufReader::new(stderr);
@@ -109,8 +117,10 @@ for line in sys.stdin:
             let mut line = String::new();
             match tokio::time::timeout(
                 std::time::Duration::from_secs(30),
-                stderr_reader.read_line(&mut line)
-            ).await {
+                stderr_reader.read_line(&mut line),
+            )
+            .await
+            {
                 Ok(Ok(0)) => break,
                 Ok(Ok(_)) => {
                     if line.contains("ready") {
@@ -122,7 +132,9 @@ for line in sys.stdin:
             }
         }
         if !found_ready {
-            return Err(NpcError::Other("Daemon failed to start: never sent ready signal".into()));
+            return Err(NpcError::Other(
+                "Daemon failed to start: never sent ready signal".into(),
+            ));
         }
 
         Ok(Self {
@@ -133,7 +145,7 @@ for line in sys.stdin:
     }
 
     pub async fn execute(&mut self, command: &str, stdin_input: Option<&str>) -> Result<String> {
-        use tokio::io::{AsyncWriteExt, AsyncBufReadExt};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
         let req = serde_json::json!({
             "command": command,
@@ -142,19 +154,30 @@ for line in sys.stdin:
         let mut line = serde_json::to_string(&req).unwrap_or_default();
         line.push('\n');
 
-        self.stdin.write_all(line.as_bytes()).await
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
             .map_err(|e| NpcError::Other(format!("Daemon write: {}", e)))?;
-        self.stdin.flush().await
+        self.stdin
+            .flush()
+            .await
             .map_err(|e| NpcError::Other(format!("Daemon flush: {}", e)))?;
 
         let mut resp_line = String::new();
-        self.stdout.read_line(&mut resp_line).await
+        self.stdout
+            .read_line(&mut resp_line)
+            .await
             .map_err(|e| NpcError::Other(format!("Daemon read: {}", e)))?;
 
-        let resp: serde_json::Value = serde_json::from_str(&resp_line)
-            .map_err(|e| NpcError::Other(format!("Daemon parse: {} (raw: {})", e, resp_line.trim())))?;
+        let resp: serde_json::Value = serde_json::from_str(&resp_line).map_err(|e| {
+            NpcError::Other(format!("Daemon parse: {} (raw: {})", e, resp_line.trim()))
+        })?;
 
-        Ok(resp.get("output").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        Ok(resp
+            .get("output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
     }
 }
 
@@ -201,9 +224,10 @@ impl Kernel {
     }
 
     pub fn kill(&mut self, pid: Pid, exit_code: i32) -> Result<()> {
-        let process = self.processes.get_mut(&pid).ok_or_else(|| {
-            NpcError::Other(format!("No process with pid {}", pid))
-        })?;
+        let process = self
+            .processes
+            .get_mut(&pid)
+            .ok_or_else(|| NpcError::Other(format!("No process with pid {}", pid)))?;
         process.kill(exit_code);
         tracing::info!("kernel: killed pid:{} exit_code:{}", pid, exit_code);
         Ok(())
@@ -220,14 +244,11 @@ impl Kernel {
         self.jinxes.keys().map(|s| s.as_str()).collect()
     }
 
-    pub async fn exec_chat(
-        &mut self,
-        pid: Pid,
-        input: &str,
-    ) -> Result<String> {
-        let process = self.processes.get_mut(&pid).ok_or_else(|| {
-            NpcError::Other(format!("No process with pid {}", pid))
-        })?;
+    pub async fn exec_chat(&mut self, pid: Pid, input: &str) -> Result<String> {
+        let process = self
+            .processes
+            .get_mut(&pid)
+            .ok_or_else(|| NpcError::Other(format!("No process with pid {}", pid)))?;
 
         process.state = ProcessState::Running;
         process.new_turn();
@@ -243,13 +264,13 @@ impl Kernel {
         messages.push(Message::user(input));
 
         let response = crate::r#gen::get_genai_response(
-                &process.npc.resolved_provider(),
-                &process.npc.resolved_model(),
-                &messages,
-                None,
-                process.npc.api_url.as_deref(),
-            )
-            .await?;
+            &process.npc.resolved_provider(),
+            &process.npc.resolved_model(),
+            &messages,
+            None,
+            process.npc.api_url.as_deref(),
+        )
+        .await?;
 
         if let Some(ref usage) = response.usage {
             process.record_usage(usage.prompt_tokens, usage.completion_tokens, 0.0);
@@ -272,22 +293,22 @@ impl Kernel {
         syscall::execute_syscall(self, pid, jinx_name, args).await
     }
 
-    pub async fn exec(
-        &mut self,
-        pid: Pid,
-        input: &str,
-    ) -> Result<String> {
-        use crate::r#gen::sanitize::sanitize_messages;
+    pub async fn exec(&mut self, pid: Pid, input: &str) -> Result<String> {
         use crate::r#gen::cost::calculate_cost;
+        use crate::r#gen::sanitize::sanitize_messages;
 
         let (model, provider, system, api_url, npc_name, active_npc, mut tool_defs, executors) = {
-            let process = self.processes.get_mut(&pid).ok_or_else(|| {
-                NpcError::Other(format!("No process with pid {}", pid))
-            })?;
+            let process = self
+                .processes
+                .get_mut(&pid)
+                .ok_or_else(|| NpcError::Other(format!("No process with pid {}", pid)))?;
 
             if let Some(reason) = process.usage.exceeds(&process.limits) {
                 process.kill(137);
-                return Err(NpcError::Other(format!("Process {} killed: {}", pid, reason)));
+                return Err(NpcError::Other(format!(
+                    "Process {} killed: {}",
+                    pid, reason
+                )));
             }
 
             process.state = ProcessState::Running;
@@ -301,27 +322,46 @@ impl Kernel {
             let npc_name = process.npc.name.clone();
             let active_npc = process.npc.clone();
 
-            if !process.capabilities.is_superuser && !process.capabilities.allowed_jinxes.is_empty() {
+            if !process.capabilities.is_superuser && !process.capabilities.allowed_jinxes.is_empty()
+            {
                 let mut td = td;
-                td.retain(|t| process.capabilities.allowed_jinxes.contains(&t.function.name));
-                (model, provider, system, api_url, npc_name, active_npc, td, ex)
+                td.retain(|t| {
+                    process
+                        .capabilities
+                        .allowed_jinxes
+                        .contains(&t.function.name)
+                });
+                (
+                    model, provider, system, api_url, npc_name, active_npc, td, ex,
+                )
             } else {
-                (model, provider, system, api_url, npc_name, active_npc, td, ex)
+                (
+                    model, provider, system, api_url, npc_name, active_npc, td, ex,
+                )
             }
         };
 
-        let tools = if tool_defs.is_empty() { None } else { Some(tool_defs.as_slice()) };
+        let tools = if tool_defs.is_empty() {
+            None
+        } else {
+            Some(tool_defs.as_slice())
+        };
 
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".to_string());
         let path_cmd = format!("The current working directory is: {}", cwd);
         let ls_files = if let Ok(entries) = std::fs::read_dir(&cwd) {
-            let files: Vec<String> = entries.flatten().take(100)
+            let files: Vec<String> = entries
+                .flatten()
+                .take(100)
                 .map(|e| e.path().to_string_lossy().to_string())
                 .collect();
             let total = std::fs::read_dir(&cwd).map(|d| d.count()).unwrap_or(0);
-            let mut listing = format!("Files in the current directory (full paths):\n{}", files.join("\n"));
+            let mut listing = format!(
+                "Files in the current directory (full paths):\n{}",
+                files.join("\n")
+            );
             if total > 100 {
                 listing.push_str(&format!("\n... and {} more files", total - 100));
             }
@@ -329,11 +369,17 @@ impl Kernel {
         } else {
             "No files found in the current directory.".to_string()
         };
-        let platform_info = format!("Platform: {} {} ({})", std::env::consts::OS, "", std::env::consts::ARCH);
+        let platform_info = format!(
+            "Platform: {} {} ({})",
+            std::env::consts::OS,
+            "",
+            std::env::consts::ARCH
+        );
         let context_info = format!("{}\n{}\n{}", path_cmd, ls_files, platform_info);
 
         let tool_guidance = if tools.is_some() {
-            let tool_names: Vec<&str> = tool_defs.iter().map(|t| t.function.name.as_str()).collect();
+            let tool_names: Vec<&str> =
+                tool_defs.iter().map(|t| t.function.name.as_str()).collect();
             format!(
                 "\nYou have access to these tools: {}. Call tools via the function calling interface.\n\n\
 Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user. Use stop when you are done. Do not call the same tool twice with the same arguments.\n\
@@ -382,9 +428,13 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             );
 
             let response = crate::r#gen::get_genai_response(
-                    &provider, &model, &messages, tools, api_url.as_deref(),
-                )
-                .await?;
+                &provider,
+                &model,
+                &messages,
+                tools,
+                api_url.as_deref(),
+            )
+            .await?;
 
             if let Some(ref usage) = response.usage {
                 total_input_tokens += usage.prompt_tokens;
@@ -409,42 +459,72 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
                 if let Some(ref text) = response.message.content {
                     if !text.is_empty() {
-                        eprintln!("\x1b[90m  [iter {}] thinking:\x1b[0m {}", iteration + 1, text);
+                        eprintln!(
+                            "\x1b[90m  [iter {}] thinking:\x1b[0m {}",
+                            iteration + 1,
+                            text
+                        );
                     }
                 }
-                let called: Vec<String> = tool_calls.iter().map(|tc| {
-                    let schema_params: Vec<String> = tool_defs.iter()
-                        .find(|td| td.function.name == tc.function.name)
-                        .and_then(|td| td.function.parameters.get("properties"))
-                        .and_then(|p| p.as_object())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default();
-                    let filtered = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
-                        if let Some(obj) = parsed.as_object() {
-                            let clean: serde_json::Map<String, serde_json::Value> = if schema_params.is_empty() {
-                                obj.clone()
+                let called: Vec<String> = tool_calls
+                    .iter()
+                    .map(|tc| {
+                        let schema_params: Vec<String> = tool_defs
+                            .iter()
+                            .find(|td| td.function.name == tc.function.name)
+                            .and_then(|td| td.function.parameters.get("properties"))
+                            .and_then(|p| p.as_object())
+                            .map(|obj| obj.keys().cloned().collect())
+                            .unwrap_or_default();
+                        let filtered = if let Ok(parsed) =
+                            serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                        {
+                            if let Some(obj) = parsed.as_object() {
+                                let clean: serde_json::Map<String, serde_json::Value> =
+                                    if schema_params.is_empty() {
+                                        obj.clone()
+                                    } else {
+                                        obj.iter()
+                                            .filter(|(k, _)| schema_params.contains(k))
+                                            .map(|(k, v)| (k.clone(), v.clone()))
+                                            .collect()
+                                    };
+                                serde_json::to_string(&clean).unwrap_or_default()
                             } else {
-                                obj.iter().filter(|(k, _)| schema_params.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect()
-                            };
-                            serde_json::to_string(&clean).unwrap_or_default()
+                                tc.function.arguments.clone()
+                            }
                         } else {
                             tc.function.arguments.clone()
-                        }
-                    } else {
-                        tc.function.arguments.clone()
-                    };
-                    let preview = if filtered.len() > 200 { format!("{}...", &filtered[..200]) } else { filtered };
-                    format!("{}({})", tc.function.name, preview)
-                }).collect();
-                eprintln!("\x1b[90m  [iter {}] tools: {}\x1b[0m", iteration + 1, called.join(", "));
+                        };
+                        let preview = if filtered.len() > 200 {
+                            format!("{}...", &filtered[..200])
+                        } else {
+                            filtered
+                        };
+                        format!("{}({})", tc.function.name, preview)
+                    })
+                    .collect();
+                eprintln!(
+                    "\x1b[90m  [iter {}] tools: {}\x1b[0m",
+                    iteration + 1,
+                    called.join(", ")
+                );
 
-                let tc_info: Vec<(String, String, String)> = tool_calls.iter()
-                    .map(|tc| (tc.id.clone(), tc.function.name.clone(), tc.function.arguments.clone()))
+                let tc_info: Vec<(String, String, String)> = tool_calls
+                    .iter()
+                    .map(|tc| {
+                        (
+                            tc.id.clone(),
+                            tc.function.name.clone(),
+                            tc.function.arguments.clone(),
+                        )
+                    })
                     .collect();
 
                 let can_run: Vec<bool> = {
                     let process = self.processes.get(&pid).unwrap();
-                    tc_info.iter()
+                    tc_info
+                        .iter()
                         .map(|(_, name, _)| process.capabilities.can_run_jinx(name))
                         .collect()
                 };
@@ -467,11 +547,17 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     let args: HashMap<String, String> =
                         serde_json::from_str(tc_args_str).unwrap_or_default();
 
-                    let tool_result = self.execute_tool(tc_name, &args, &executors, &active_npc).await;
+                    let tool_result = self
+                        .execute_tool(tc_name, &args, &executors, &active_npc)
+                        .await;
 
                     eprintln!("\x1b[36m\n⚡ {}:\x1b[0m", tc_name);
                     let preview = if tool_result.len() > 500 {
-                        format!("{}...\n[{} chars total]", &tool_result[..500], tool_result.len())
+                        format!(
+                            "{}...\n[{} chars total]",
+                            &tool_result[..500],
+                            tool_result.len()
+                        )
                     } else {
                         tool_result.clone()
                     };
@@ -482,14 +568,17 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     }
 
                     if tc_name == "chat" {
-                        final_output = args.get("message")
+                        final_output = args
+                            .get("message")
                             .or_else(|| args.get("query"))
                             .cloned()
                             .unwrap_or_default();
                     }
 
                     let process = self.processes.get_mut(&pid).unwrap();
-                    process.messages.push(Message::tool_result(tc_id, &tool_result));
+                    process
+                        .messages
+                        .push(Message::tool_result(tc_id, &tool_result));
                 }
             } else {
                 final_output = response.message.content.clone().unwrap_or_default();
@@ -520,41 +609,80 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
         match name {
             "sh" => {
                 let cmd = args.get("bash_command").cloned().unwrap_or_default();
-                if cmd.is_empty() { return "(no command provided)".to_string(); }
-                match tokio::process::Command::new("bash").arg("-c").arg(&cmd).output().await {
+                if cmd.is_empty() {
+                    return "(no command provided)".to_string();
+                }
+                match tokio::process::Command::new("bash")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .output()
+                    .await
+                {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
                         let stderr = String::from_utf8_lossy(&out.stderr);
                         if !out.status.success() && !stderr.is_empty() {
-                            format!("Error (exit {}):\n{}", out.status.code().unwrap_or(-1), stderr)
-                        } else if stdout.trim().is_empty() { "(no output)".to_string() }
-                        else { stdout.to_string() }
+                            format!(
+                                "Error (exit {}):\n{}",
+                                out.status.code().unwrap_or(-1),
+                                stderr
+                            )
+                        } else if stdout.trim().is_empty() {
+                            "(no output)".to_string()
+                        } else {
+                            stdout.to_string()
+                        }
                     }
                     Err(e) => format!("Failed: {}", e),
                 }
             }
             "python" => {
                 let code = args.get("code").cloned().unwrap_or_default();
-                if code.is_empty() { return "(no code provided)".to_string(); }
-                match tokio::process::Command::new("python3").arg("-c").arg(&code).output().await {
+                if code.is_empty() {
+                    return "(no code provided)".to_string();
+                }
+                match tokio::process::Command::new("python3")
+                    .arg("-c")
+                    .arg(&code)
+                    .output()
+                    .await
+                {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        if stdout.trim().is_empty() && !stderr.is_empty() { format!("Python error:\n{}", stderr) }
-                        else { stdout.to_string() }
+                        if stdout.trim().is_empty() && !stderr.is_empty() {
+                            format!("Python error:\n{}", stderr)
+                        } else {
+                            stdout.to_string()
+                        }
                     }
                     Err(e) => format!("Failed: {}", e),
                 }
             }
             "web_search" => {
-                let query = args.get("query").or_else(|| args.get("search_query")).cloned().unwrap_or_default();
-                if query.is_empty() { return "(no query)".to_string(); }
-                let provider = args.get("provider").map(|s| s.as_str()).unwrap_or("duckduckgo");
+                let query = args
+                    .get("query")
+                    .or_else(|| args.get("search_query"))
+                    .cloned()
+                    .unwrap_or_default();
+                if query.is_empty() {
+                    return "(no query)".to_string();
+                }
+                let provider = args
+                    .get("provider")
+                    .map(|s| s.as_str())
+                    .unwrap_or("duckduckgo");
                 match crate::data::web::search_web(&query, 5, provider, None).await {
                     Ok(results) if !results.is_empty() => {
                         let mut out = format!("Web search results for '{}':\n\n", query);
                         for (i, r) in results.iter().enumerate() {
-                            out.push_str(&format!("{}. {}\n   {}\n   {}\n\n", i + 1, r.title, r.url, r.snippet));
+                            out.push_str(&format!(
+                                "{}. {}\n   {}\n   {}\n\n",
+                                i + 1,
+                                r.title,
+                                r.url,
+                                r.snippet
+                            ));
                         }
                         out
                     }
@@ -563,69 +691,174 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 }
             }
             "stop" => "STOP".to_string(),
-            "chat" => args.get("message").or_else(|| args.get("query")).cloned().unwrap_or_default(),
+            "chat" => args
+                .get("message")
+                .or_else(|| args.get("query"))
+                .cloned()
+                .unwrap_or_default(),
             "edit_file" | "edit" => {
-                let path = shellexpand::tilde(args.get("path").or_else(|| args.get("file_path")).map(|s| s.as_str()).unwrap_or("")).to_string();
+                let path = shellexpand::tilde(
+                    args.get("path")
+                        .or_else(|| args.get("file_path"))
+                        .map(|s| s.as_str())
+                        .unwrap_or(""),
+                )
+                .to_string();
                 let action = args.get("action").map(|s| s.as_str()).unwrap_or("create");
-                let new_text = args.get("new_text").or_else(|| args.get("content")).or_else(|| args.get("text")).cloned().unwrap_or_default();
+                let new_text = args
+                    .get("new_text")
+                    .or_else(|| args.get("content"))
+                    .or_else(|| args.get("text"))
+                    .cloned()
+                    .unwrap_or_default();
                 let old_text = args.get("old_text").cloned().unwrap_or_default();
                 match action {
-                    "create" | "write" => std::fs::write(&path, &new_text).map(|_| format!("Wrote {} ({} bytes)", path, new_text.len())).unwrap_or_else(|e| format!("Error: {}", e)),
-                    "append" => { use std::io::Write; std::fs::OpenOptions::new().append(true).create(true).open(&path).and_then(|mut f| f.write_all(new_text.as_bytes())).map(|_| format!("Appended to {}", path)).unwrap_or_else(|e| format!("Error: {}", e)) }
-                    "replace" => std::fs::read_to_string(&path).and_then(|c| std::fs::write(&path, c.replace(&old_text, &new_text))).map(|_| format!("Replaced in {}", path)).unwrap_or_else(|e| format!("Error: {}", e)),
+                    "create" | "write" => std::fs::write(&path, &new_text)
+                        .map(|_| format!("Wrote {} ({} bytes)", path, new_text.len()))
+                        .unwrap_or_else(|e| format!("Error: {}", e)),
+                    "append" => {
+                        use std::io::Write;
+                        std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(&path)
+                            .and_then(|mut f| f.write_all(new_text.as_bytes()))
+                            .map(|_| format!("Appended to {}", path))
+                            .unwrap_or_else(|e| format!("Error: {}", e))
+                    }
+                    "replace" => std::fs::read_to_string(&path)
+                        .and_then(|c| std::fs::write(&path, c.replace(&old_text, &new_text)))
+                        .map(|_| format!("Replaced in {}", path))
+                        .unwrap_or_else(|e| format!("Error: {}", e)),
                     _ => format!("Unknown action: {}", action),
                 }
             }
             "load_file" => {
-                let path = shellexpand::tilde(args.get("path").or_else(|| args.get("file_path")).map(|s| s.as_str()).unwrap_or("")).to_string();
+                let path = shellexpand::tilde(
+                    args.get("path")
+                        .or_else(|| args.get("file_path"))
+                        .map(|s| s.as_str())
+                        .unwrap_or(""),
+                )
+                .to_string();
                 match std::fs::read_to_string(&path) {
-                    Ok(c) => { let l = c.lines().count(); if c.len() > 10000 { format!("File: {} ({} lines)\n---\n{}...[truncated]", path, l, &c[..10000]) } else { format!("File: {} ({} lines)\n---\n{}", path, l, c) } }
+                    Ok(c) => {
+                        let l = c.lines().count();
+                        if c.len() > 10000 {
+                            format!(
+                                "File: {} ({} lines)\n---\n{}...[truncated]",
+                                path,
+                                l,
+                                &c[..10000]
+                            )
+                        } else {
+                            format!("File: {} ({} lines)\n---\n{}", path, l, c)
+                        }
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
             "file_search" => {
-                let query = args.get("query").or_else(|| args.get("pattern")).cloned().unwrap_or_default();
-                let path = shellexpand::tilde(args.get("path").or_else(|| args.get("directory")).map(|s| s.as_str()).unwrap_or(".")).to_string();
-                let cmd = format!("grep -rn --include='*.{{py,rs,js,ts,md,txt,yaml,yml,toml,json,sh}}' -l '{}' '{}' 2>/dev/null | head -20", query.replace('\'', ""), path);
-                match tokio::process::Command::new("bash").arg("-c").arg(&cmd).output().await {
-                    Ok(out) => { let s = String::from_utf8_lossy(&out.stdout); if s.trim().is_empty() { format!("No files matching '{}' in {}", query, path) } else { s.to_string() } }
+                let query = args
+                    .get("query")
+                    .or_else(|| args.get("pattern"))
+                    .cloned()
+                    .unwrap_or_default();
+                let path = shellexpand::tilde(
+                    args.get("path")
+                        .or_else(|| args.get("directory"))
+                        .map(|s| s.as_str())
+                        .unwrap_or("."),
+                )
+                .to_string();
+                let cmd = format!(
+                    "grep -rn --include='*.{{py,rs,js,ts,md,txt,yaml,yml,toml,json,sh}}' -l '{}' '{}' 2>/dev/null | head -20",
+                    query.replace('\'', ""),
+                    path
+                );
+                match tokio::process::Command::new("bash")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .output()
+                    .await
+                {
+                    Ok(out) => {
+                        let s = String::from_utf8_lossy(&out.stdout);
+                        if s.trim().is_empty() {
+                            format!("No files matching '{}' in {}", query, path)
+                        } else {
+                            s.to_string()
+                        }
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
             "delegate" | "convene" => {
-                let target = args.get("npc_name").or_else(|| args.get("target")).cloned().unwrap_or_default();
-                let msg = args.get("message").or_else(|| args.get("query")).cloned().unwrap_or_default();
+                let target = args
+                    .get("npc_name")
+                    .or_else(|| args.get("target"))
+                    .cloned()
+                    .unwrap_or_default();
+                let msg = args
+                    .get("message")
+                    .or_else(|| args.get("query"))
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some(target_npc) = self.team.get_npc(&target).cloned() {
                     match crate::llm_funcs::get_llm_response(
-                        &msg, Some(&target_npc), None, None, None, &[], self.team.context.as_deref(),
-                    ).await {
-                        Ok(result) => format!("@{} responded: {}", target, result.response.unwrap_or_default()),
+                        &msg,
+                        Some(&target_npc),
+                        None,
+                        None,
+                        None,
+                        &[],
+                        self.team.context.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(result) => format!(
+                            "@{} responded: {}",
+                            target,
+                            result.response.unwrap_or_default()
+                        ),
                         Err(e) => format!("Delegation to @{} failed: {}", target, e),
                     }
                 } else {
-                    format!("NPC '{}' not found in team. Available: {:?}", target, self.team.npc_names())
+                    format!(
+                        "NPC '{}' not found in team. Available: {:?}",
+                        target,
+                        self.team.npc_names()
+                    )
                 }
             }
-            _ => {
-                match executors.get(name) {
-                    Some(crate::npc_compiler::ToolExecutor::Jinx(jname)) => {
-                        if let Some(j) = self.jinxes.get(jname) {
-                            match npc_compiler::execute_jinx_with_npc(j, args, &self.jinxes, Some(active_npc)).await {
-                                Ok(r) => r.output,
-                                Err(e) => format!("Jinx error: {}", e),
-                            }
-                        } else { format!("Jinx '{}' not found", jname) }
+            _ => match executors.get(name) {
+                Some(crate::npc_compiler::ToolExecutor::Jinx(jname)) => {
+                    if let Some(j) = self.jinxes.get(jname) {
+                        match npc_compiler::execute_jinx_with_npc(
+                            j,
+                            args,
+                            &self.jinxes,
+                            Some(active_npc),
+                        )
+                        .await
+                        {
+                            Ok(r) => r.output,
+                            Err(e) => format!("Jinx error: {}", e),
+                        }
+                    } else {
+                        format!("Jinx '{}' not found", jname)
                     }
-                    _ => format!("Tool '{}' not implemented", name),
                 }
-            }
+                _ => format!("Tool '{}' not implemented", name),
+            },
         }
     }
 
     pub fn fork(&mut self, parent_pid: Pid) -> Result<Pid> {
-        let parent = self.processes.get(&parent_pid).ok_or_else(|| {
-            NpcError::Other(format!("No process with pid {}", parent_pid))
-        })?;
+        let parent = self
+            .processes
+            .get(&parent_pid)
+            .ok_or_else(|| NpcError::Other(format!("No process with pid {}", parent_pid)))?;
 
         if !parent.capabilities.can_spawn {
             return Err(NpcError::Other(format!(
@@ -651,9 +884,10 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
         input: &str,
     ) -> Result<String> {
         {
-            let from = self.processes.get(&from_pid).ok_or_else(|| {
-                NpcError::Other(format!("No process with pid {}", from_pid))
-            })?;
+            let from = self
+                .processes
+                .get(&from_pid)
+                .ok_or_else(|| NpcError::Other(format!("No process with pid {}", from_pid)))?;
             if !from.capabilities.can_delegate {
                 return Err(NpcError::Other(format!(
                     "Process {} lacks CAP_DELEGATE",
@@ -692,10 +926,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             .values()
             .map(|p| p.usage.total_input_tokens + p.usage.total_output_tokens)
             .sum();
-        let total_cost: f64 = processes
-            .values()
-            .map(|p| p.usage.total_cost_usd)
-            .sum();
+        let total_cost: f64 = processes.values().map(|p| p.usage.total_cost_usd).sum();
 
         KernelStats {
             uptime_secs: (chrono::Utc::now() - self.boot_time).num_seconds() as u64,

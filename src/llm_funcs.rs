@@ -1,8 +1,7 @@
-
 use crate::error::{NpcError, Result};
 #[allow(unused_imports)]
-use crate::r#gen::{LlmResponse, Message, ToolDef, ToolCall};
-use crate::npc_compiler::{NPC, Jinx, JinxInput};
+use crate::r#gen::{LlmResponse, Message, ToolCall, ToolDef};
+use crate::npc_compiler::{Jinx, JinxInput, NPC};
 use std::collections::HashMap;
 
 pub struct LlmResponseResult {
@@ -38,8 +37,12 @@ pub fn resolve_model_provider(
     }
     if let Some(npc) = npc {
         return (
-            model.map(String::from).unwrap_or_else(|| npc.resolved_model()),
-            provider.map(String::from).unwrap_or_else(|| npc.resolved_provider()),
+            model
+                .map(String::from)
+                .unwrap_or_else(|| npc.resolved_model()),
+            provider
+                .map(String::from)
+                .unwrap_or_else(|| npc.resolved_provider()),
         );
     }
     ("llama3.2".to_string(), "ollama".to_string())
@@ -47,7 +50,13 @@ pub fn resolve_model_provider(
 
 fn lookup_provider(model: &str) -> String {
     let m = model.to_lowercase();
-    if m.starts_with("gpt-") || m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") || m.contains("dall-e") || m.starts_with("gpt-image") {
+    if m.starts_with("gpt-")
+        || m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4")
+        || m.contains("dall-e")
+        || m.starts_with("gpt-image")
+    {
         "openai".into()
     } else if m.starts_with("claude") {
         "anthropic".into()
@@ -55,7 +64,13 @@ fn lookup_provider(model: &str) -> String {
         "gemini".into()
     } else if m.starts_with("deepseek") {
         "deepseek".into()
-    } else if m.contains(":") || m.starts_with("llama") || m.starts_with("qwen") || m.starts_with("mistral") || m.starts_with("phi") || m.starts_with("llava") {
+    } else if m.contains(":")
+        || m.starts_with("llama")
+        || m.starts_with("qwen")
+        || m.starts_with("mistral")
+        || m.starts_with("phi")
+        || m.starts_with("llava")
+    {
         "ollama".into()
     } else {
         "ollama".into()
@@ -72,9 +87,18 @@ pub async fn get_llm_response(
     team_context: Option<&str>,
 ) -> Result<LlmResponseResult> {
     get_llm_response_ext(
-        input, npc, model, provider, tools, messages,
-        team_context, None, None, false,
-    ).await
+        input,
+        npc,
+        model,
+        provider,
+        tools,
+        messages,
+        team_context,
+        None,
+        None,
+        false,
+    )
+    .await
 }
 
 pub async fn get_llm_response_ext(
@@ -148,9 +172,13 @@ pub async fn get_llm_response_ext(
                 .map_err(|e| NpcError::LlmRequest(format!("spawn_blocking: {}", e)))??
             } else {
                 crate::r#gen::get_genai_response(
-                    &resolved_provider, &resolved_model, &clean, tools,
+                    &resolved_provider,
+                    &resolved_model,
+                    &clean,
+                    tools,
                     npc.and_then(|n| n.api_url.as_deref()),
-                ).await?
+                )
+                .await?
             }
         }
         #[cfg(not(feature = "llamacpp"))]
@@ -161,9 +189,13 @@ pub async fn get_llm_response_ext(
                 ));
             }
             crate::r#gen::get_genai_response(
-                &resolved_provider, &resolved_model, &clean, tools,
+                &resolved_provider,
+                &resolved_model,
+                &clean,
+                tools,
                 npc.and_then(|n| n.api_url.as_deref()),
-            ).await?
+            )
+            .await?
         }
     };
 
@@ -171,18 +203,29 @@ pub async fn get_llm_response_ext(
         input_tokens: u.prompt_tokens,
         output_tokens: u.completion_tokens,
     });
-    let cost = response.usage.as_ref().map(|u| {
-        crate::r#gen::cost::calculate_cost(&resolved_model, u.prompt_tokens, u.completion_tokens)
-    }).unwrap_or(0.0);
+    let cost = response
+        .usage
+        .as_ref()
+        .map(|u| {
+            crate::r#gen::cost::calculate_cost(
+                &resolved_model,
+                u.prompt_tokens,
+                u.completion_tokens,
+            )
+        })
+        .unwrap_or(0.0);
 
     let response_text = response.message.content.clone();
     let tool_calls = response.message.tool_calls.clone().unwrap_or_default();
 
     let response_json = if format == Some("json") {
         if let Some(ref text) = response_text {
-            let cleaned = text.trim()
-                .strip_prefix("```json").unwrap_or(text.trim())
-                .strip_suffix("```").unwrap_or(text.trim())
+            let cleaned = text
+                .trim()
+                .strip_prefix("```json")
+                .unwrap_or(text.trim())
+                .strip_suffix("```")
+                .unwrap_or(text.trim())
                 .trim();
             serde_json::from_str::<serde_json::Value>(cleaned).ok()
         } else {
@@ -209,31 +252,82 @@ pub async fn get_llm_response_ext(
     })
 }
 
-async fn llm_call(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<String> {
-    let result = get_llm_response_ext(prompt, npc, model, provider, None, &[], None, None, context, false).await?;
+async fn llm_call(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<String> {
+    let result = get_llm_response_ext(
+        prompt,
+        npc,
+        model,
+        provider,
+        None,
+        &[],
+        None,
+        None,
+        context,
+        false,
+    )
+    .await?;
     Ok(result.response.unwrap_or_default())
 }
 
-async fn llm_call_json(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<serde_json::Value> {
-    let result = get_llm_response_ext(prompt, npc, model, provider, None, &[], None, Some("json"), context, false).await?;
+async fn llm_call_json(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<serde_json::Value> {
+    let result = get_llm_response_ext(
+        prompt,
+        npc,
+        model,
+        provider,
+        None,
+        &[],
+        None,
+        Some("json"),
+        context,
+        false,
+    )
+    .await?;
     if let Some(json) = result.response_json {
         Ok(json)
     } else {
         let text = result.response.unwrap_or_default();
-        let clean = text.trim()
-            .strip_prefix("```json").unwrap_or(text.trim())
-            .strip_suffix("```").unwrap_or(text.trim())
+        let clean = text
+            .trim()
+            .strip_prefix("```json")
+            .unwrap_or(text.trim())
+            .strip_suffix("```")
+            .unwrap_or(text.trim())
             .trim();
         serde_json::from_str(clean).map_err(|e| NpcError::Shell(format!("JSON parse error: {}", e)))
     }
 }
 
-fn make_result(response: Option<String>, response_json: Option<serde_json::Value>, messages: Vec<Message>, model: &str, provider: &str) -> LlmResponseResult {
+fn make_result(
+    response: Option<String>,
+    response_json: Option<serde_json::Value>,
+    messages: Vec<Message>,
+    model: &str,
+    provider: &str,
+) -> LlmResponseResult {
     LlmResponseResult {
-        response, response_json, messages,
-        tool_calls: vec![], tool_results: vec![],
-        usage: None, model: model.into(), provider: provider.into(),
-        cost_usd: 0.0, error: None,
+        response,
+        response_json,
+        messages,
+        tool_calls: vec![],
+        tool_results: vec![],
+        usage: None,
+        model: model.into(),
+        provider: provider.into(),
+        cost_usd: 0.0,
+        error: None,
     }
 }
 
@@ -249,12 +343,15 @@ pub async fn execute_llm_command(
             "A user submitted this query: {}.\n\
             You need to generate a bash command that will accomplish the user's intent.\n\
             Respond ONLY with the bash command that should be executed.\n\
-            Do not include markdown formatting", command
+            Do not include markdown formatting",
+            command
         );
         let result = get_llm_response(&prompt, npc, model, provider, None, messages, None).await?;
         let bash_command = result.response.clone().unwrap_or_default();
 
-        let run = std::process::Command::new("sh").args(["-c", &bash_command]).output();
+        let run = std::process::Command::new("sh")
+            .args(["-c", &bash_command])
+            .output();
         match run {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -266,7 +363,8 @@ pub async fn execute_llm_command(
                     command, bash_command, stdout
                 );
                 messages.push(Message::user(&explain));
-                return get_llm_response(&explain, npc, model, provider, None, messages, None).await;
+                return get_llm_response(&explain, npc, model, provider, None, messages, None)
+                    .await;
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -288,11 +386,18 @@ pub async fn execute_llm_command(
     }
     Ok(make_result(
         Some("Max attempts reached. Unable to execute the command successfully.".into()),
-        None, messages.clone(), model.unwrap_or(""), provider.unwrap_or(""),
+        None,
+        messages.clone(),
+        model.unwrap_or(""),
+        provider.unwrap_or(""),
     ))
 }
 
-pub async fn handle_request_input(context: &str, model: &str, provider: &str) -> Result<serde_json::Value> {
+pub async fn handle_request_input(
+    context: &str,
+    model: &str,
+    provider: &str,
+) -> Result<serde_json::Value> {
     let prompt = format!(
         "Analyze the text:\n{}\n\
         and determine what additional input is needed.\n\
@@ -309,7 +414,10 @@ pub async fn handle_request_input(context: &str, model: &str, provider: &str) ->
     llm_call_json(&prompt, Some(model), Some(provider), None, None).await
 }
 
-fn get_jinxes_from_npc<'a>(npc: Option<&'a NPC>, team_jinxes: &'a HashMap<String, Jinx>) -> HashMap<String, &'a Jinx> {
+fn get_jinxes_from_npc<'a>(
+    npc: Option<&'a NPC>,
+    team_jinxes: &'a HashMap<String, Jinx>,
+) -> HashMap<String, &'a Jinx> {
     let mut result = HashMap::new();
     if let Some(npc) = npc {
         for name in &npc.jinx_names {
@@ -369,16 +477,36 @@ pub async fn handle_jinx_call(
                     "In the previous attempt, the jinx name was: {}.\n\
                     That jinx was not available. Only select from: {}.\n\
                     Original request: {}",
-                    jinx_name, available.join(", "), command
+                    jinx_name,
+                    available.join(", "),
+                    command
                 );
                 let resp = llm_call_json(&retry_prompt, model, provider, npc, context).await?;
                 let new_name = resp.get("jinx_name").and_then(|v| v.as_str()).unwrap_or("");
                 if !new_name.is_empty() && new_name != jinx_name {
-                    return handle_jinx_call(command, new_name, jinxes, model, provider, npc, messages, context, n_attempts, attempt + 1).await;
+                    return handle_jinx_call(
+                        command,
+                        new_name,
+                        jinxes,
+                        model,
+                        provider,
+                        npc,
+                        messages,
+                        context,
+                        n_attempts,
+                        attempt + 1,
+                    )
+                    .await;
                 }
             }
             let mut r = HashMap::new();
-            r.insert("output".into(), serde_json::json!(format!("Jinx '{}' not found after {} attempts.", jinx_name, n_attempts)));
+            r.insert(
+                "output".into(),
+                serde_json::json!(format!(
+                    "Jinx '{}' not found after {} attempts.",
+                    jinx_name, n_attempts
+                )),
+            );
             r.insert("messages".into(), serde_json::json!(messages));
             return Ok(r);
         }
@@ -390,7 +518,8 @@ pub async fn handle_jinx_call(
     for inp in &jinx.inputs {
         example_format.insert(inp.name.clone(), serde_json::Value::String("...".into()));
     }
-    let json_format_str = serde_json::to_string_pretty(&serde_json::Value::Object(example_format)).unwrap_or_default();
+    let json_format_str = serde_json::to_string_pretty(&serde_json::Value::Object(example_format))
+        .unwrap_or_default();
 
     let recent: Vec<&Message> = messages.iter().rev().take(5).collect();
     let prompt = format!(
@@ -405,8 +534,12 @@ pub async fn handle_jinx_call(
         If the jinx requires code, generate it exactly according to the instructions.\n\n\
         Return only the JSON object without any markdown formatting.\n\
         The format of the JSON object is:\n{}",
-        jinx.name, command,
-        recent.iter().map(|m| format!("{}: {}", m.role, m.content.as_deref().unwrap_or(""))).collect::<Vec<_>>(),
+        jinx.name,
+        command,
+        recent
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content.as_deref().unwrap_or("")))
+            .collect::<Vec<_>>(),
         jinx.description,
         jinx.inputs.iter().map(|i| &i.name).collect::<Vec<_>>(),
         json_format_str,
@@ -420,29 +553,61 @@ pub async fn handle_jinx_call(
         Err(e) => {
             if attempt < n_attempts {
                 let ctx = format!("Previous attempt failed to parse JSON: {}.", e);
-                return handle_jinx_call(command, jinx_name, jinxes, model, provider, npc, messages, Some(&ctx), n_attempts, attempt + 1).await;
+                return handle_jinx_call(
+                    command,
+                    jinx_name,
+                    jinxes,
+                    model,
+                    provider,
+                    npc,
+                    messages,
+                    Some(&ctx),
+                    n_attempts,
+                    attempt + 1,
+                )
+                .await;
             }
             let mut r = HashMap::new();
-            r.insert("output".into(), serde_json::json!(format!("Error extracting inputs for jinx '{}'", jinx_name)));
+            r.insert(
+                "output".into(),
+                serde_json::json!(format!("Error extracting inputs for jinx '{}'", jinx_name)),
+            );
             r.insert("messages".into(), serde_json::json!(messages));
             return Ok(r);
         }
     };
 
-    let missing: Vec<&str> = jinx.inputs.iter()
+    let missing: Vec<&str> = jinx
+        .inputs
+        .iter()
         .filter(|inp| inp.default.is_none())
         .filter(|inp| {
-            input_values.get(&inp.name).map(|v| v.as_str() == Some("") || v.is_null()).unwrap_or(true)
+            input_values
+                .get(&inp.name)
+                .map(|v| v.as_str() == Some("") || v.is_null())
+                .unwrap_or(true)
         })
         .map(|inp| inp.name.as_str())
         .collect();
 
     if !missing.is_empty() && attempt < n_attempts {
-        let ctx = format!("Previous attempt missing inputs: {:?}. Values were: {}", missing, input_values);
+        let ctx = format!(
+            "Previous attempt missing inputs: {:?}. Values were: {}",
+            missing, input_values
+        );
         return handle_jinx_call(
             &format!("{}. {}", command, ctx),
-            jinx_name, jinxes, model, provider, npc, messages, Some(&ctx), n_attempts, attempt + 1,
-        ).await;
+            jinx_name,
+            jinxes,
+            model,
+            provider,
+            npc,
+            messages,
+            Some(&ctx),
+            n_attempts,
+            attempt + 1,
+        )
+        .await;
     }
 
     tracing::info!("[INPUTS] {}", input_values);
@@ -473,7 +638,10 @@ pub async fn handle_jinx_call(
 
         match step.engine.as_str() {
             "bash" | "sh" => {
-                match std::process::Command::new("sh").args(["-c", &rendered]).output() {
+                match std::process::Command::new("sh")
+                    .args(["-c", &rendered])
+                    .output()
+                {
                     Ok(o) => {
                         let stdout = String::from_utf8_lossy(&o.stdout);
                         let stderr = String::from_utf8_lossy(&o.stderr);
@@ -486,7 +654,10 @@ pub async fn handle_jinx_call(
                 }
             }
             "python" | "python3" => {
-                match std::process::Command::new("python3").args(["-c", &rendered]).output() {
+                match std::process::Command::new("python3")
+                    .args(["-c", &rendered])
+                    .output()
+                {
                     Ok(o) => {
                         let stdout = String::from_utf8_lossy(&o.stdout);
                         let stderr = String::from_utf8_lossy(&o.stderr);
@@ -512,17 +683,32 @@ pub async fn handle_jinx_call(
 
     if output.starts_with("Error:") && attempt < n_attempts {
         let ctx = format!("Jinx failed: {}. Previous inputs: {}", output, input_values);
-        return handle_jinx_call(command, jinx_name, jinxes, model, provider, npc, messages, Some(&ctx), n_attempts, attempt + 1).await;
+        return handle_jinx_call(
+            command,
+            jinx_name,
+            jinxes,
+            model,
+            provider,
+            npc,
+            messages,
+            Some(&ctx),
+            n_attempts,
+            attempt + 1,
+        )
+        .await;
     }
 
     let mut r = HashMap::new();
     r.insert("output".into(), serde_json::json!(output));
     r.insert("messages".into(), serde_json::json!(messages));
-    r.insert("jinx_calls".into(), serde_json::json!([{
-        "name": jinx_name,
-        "arguments": input_values,
-        "result": output,
-    }]));
+    r.insert(
+        "jinx_calls".into(),
+        serde_json::json!([{
+            "name": jinx_name,
+            "arguments": input_values,
+            "result": output,
+        }]),
+    );
     Ok(r)
 }
 
@@ -538,30 +724,61 @@ pub async fn handle_action_choice(
     last_jinx_output: Option<&str>,
     step_outputs: &[String],
 ) -> Result<HashMap<String, serde_json::Value>> {
-    let action_name = action_data.get("action").and_then(|v| v.as_str()).unwrap_or("answer");
+    let action_name = action_data
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("answer");
 
     if action_name == "invoke_jinx" || action_data.get("jinx_name").is_some() {
-        let jname = action_data.get("jinx_name").and_then(|v| v.as_str()).unwrap_or("");
+        let jname = action_data
+            .get("jinx_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let mut step_context = context.unwrap_or("").to_string();
         if !step_outputs.is_empty() {
             step_context += &format!("\nContext from previous steps: {:?}", step_outputs);
         }
 
         let result = handle_jinx_call(
-            command, jname, jinxes, model, provider, npc, messages,
-            Some(&step_context), 3, 0,
-        ).await?;
+            command,
+            jname,
+            jinxes,
+            model,
+            provider,
+            npc,
+            messages,
+            Some(&step_context),
+            3,
+            0,
+        )
+        .await?;
 
-        let output = result.get("output").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let jinx_calls = result.get("jinx_calls").cloned().unwrap_or(serde_json::json!([]));
+        let output = result
+            .get("output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let jinx_calls = result
+            .get("jinx_calls")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
 
         let mut r = HashMap::new();
         r.insert("output".into(), serde_json::json!(output));
-        r.insert("messages".into(), result.get("messages").cloned().unwrap_or(serde_json::json!(messages)));
+        r.insert(
+            "messages".into(),
+            result
+                .get("messages")
+                .cloned()
+                .unwrap_or(serde_json::json!(messages)),
+        );
         r.insert("jinx_calls".into(), jinx_calls);
         Ok(r)
     } else if action_name == "answer" {
-        let prompt = format!("The user asked: {}\n\nProvide a direct answer. Do not reference tools or jinxes.", command);
+        let prompt = format!(
+            "The user asked: {}\n\nProvide a direct answer. Do not reference tools or jinxes.",
+            command
+        );
         let response = llm_call(&prompt, model, provider, npc, context).await?;
         let mut r = HashMap::new();
         r.insert("output".into(), serde_json::json!(response));
@@ -590,10 +807,18 @@ pub async fn check_llm_command(
 ) -> Result<HashMap<String, serde_json::Value>> {
     if jinxes.is_empty() {
         let response = get_llm_response_ext(
-            command, npc, model, provider, None,
+            command,
+            npc,
+            model,
+            provider,
+            None,
             &messages[messages.len().saturating_sub(10)..],
-            None, None, context, false,
-        ).await?;
+            None,
+            None,
+            context,
+            false,
+        )
+        .await?;
         messages.push(Message::user(command));
         let out = response.response.unwrap_or_default();
         if !out.is_empty() {
@@ -605,10 +830,14 @@ pub async fn check_llm_command(
         return Ok(r);
     }
 
-    let jinx_list: String = jinxes.iter().map(|(name, jinx)| {
-        let (desc, schema) = build_jinx_schema(jinx);
-        format!("- {}: {} (inputs: {})", name, desc, schema)
-    }).collect::<Vec<_>>().join("\n");
+    let jinx_list: String = jinxes
+        .iter()
+        .map(|(name, jinx)| {
+            let (desc, schema) = build_jinx_schema(jinx);
+            format!("- {}: {} (inputs: {})", name, desc, schema)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         "A user submitted this request: {}\n\n\
@@ -636,8 +865,14 @@ pub async fn check_llm_command(
 
     let recent: Vec<&Message> = messages.iter().rev().take(5).collect();
     let full_prompt = if !recent.is_empty() {
-        format!("{}\n\nRecent conversation: {:?}", prompt,
-            recent.iter().map(|m| format!("{}: {}", m.role, m.content.as_deref().unwrap_or(""))).collect::<Vec<_>>())
+        format!(
+            "{}\n\nRecent conversation: {:?}",
+            prompt,
+            recent
+                .iter()
+                .map(|m| format!("{}: {}", m.role, m.content.as_deref().unwrap_or("")))
+                .collect::<Vec<_>>()
+        )
     } else {
         prompt
     };
@@ -659,17 +894,29 @@ pub async fn check_llm_command(
 
     for action_data in &actions {
         let action_result = handle_action_choice(
-            command, action_data, jinxes, model, provider, npc,
-            &current_messages, context,
-            last_jinx_output.as_deref(), &step_outputs,
-        ).await?;
+            command,
+            action_data,
+            jinxes,
+            model,
+            provider,
+            npc,
+            &current_messages,
+            context,
+            last_jinx_output.as_deref(),
+            &step_outputs,
+        )
+        .await?;
 
         if let Some(msgs) = action_result.get("messages") {
             if let Ok(m) = serde_json::from_value::<Vec<Message>>(msgs.clone()) {
                 current_messages = m;
             }
         }
-        let output = action_result.get("output").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let output = action_result
+            .get("output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if let Some(jc) = action_result.get("jinx_calls").and_then(|v| v.as_array()) {
             all_jinx_calls.extend(jc.clone());
         }
@@ -677,12 +924,20 @@ pub async fn check_llm_command(
         if output == "INVALID_ACTION" {
             let retry_prompt = format!(
                 "In the previous attempt, the correct action name was not provided. \
-                Only select from available jinxes.\nOriginal request: {}", command
+                Only select from available jinxes.\nOriginal request: {}",
+                command
             );
             return check_llm_command(
-                &retry_prompt, model, provider, npc, messages, context, jinxes,
+                &retry_prompt,
+                model,
+                provider,
+                npc,
+                messages,
+                context,
+                jinxes,
                 max_iterations.saturating_sub(1),
-            ).await;
+            )
+            .await;
         }
 
         step_outputs.push(output.clone());
@@ -702,7 +957,8 @@ pub async fn check_llm_command(
         The following information was gathered:\n{}\n\n\
         Provide a single, coherent response answering the user's question directly.\n\
         Do not mention the steps taken.",
-        command, serde_json::to_string_pretty(&step_outputs).unwrap_or_default()
+        command,
+        serde_json::to_string_pretty(&step_outputs).unwrap_or_default()
     );
     let synthesis = llm_call(&synthesis_prompt, model, provider, npc, context).await?;
 
@@ -713,19 +969,42 @@ pub async fn check_llm_command(
     Ok(r)
 }
 
-pub async fn gen_image(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, width: u32, height: u32, api_key: Option<&str>) -> Result<crate::r#gen::GeneratedImage> {
+pub async fn gen_image(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    width: u32,
+    height: u32,
+    api_key: Option<&str>,
+) -> Result<crate::r#gen::GeneratedImage> {
     let (m, p) = if let (Some(m), Some(p)) = (model, provider) {
         (m.to_string(), p.to_string())
     } else if let Some(npc) = npc {
-        (model.map(String::from).unwrap_or_else(|| npc.resolved_model()),
-         provider.map(String::from).unwrap_or_else(|| npc.resolved_provider()))
+        (
+            model
+                .map(String::from)
+                .unwrap_or_else(|| npc.resolved_model()),
+            provider
+                .map(String::from)
+                .unwrap_or_else(|| npc.resolved_provider()),
+        )
     } else {
-        (model.unwrap_or("dall-e-3").to_string(), provider.unwrap_or("openai").to_string())
+        (
+            model.unwrap_or("dall-e-3").to_string(),
+            provider.unwrap_or("openai").to_string(),
+        )
     };
     crate::r#gen::generate_image(prompt, &m, &p, api_key, width, height).await
 }
 
-pub async fn gen_video(prompt: &str, model: Option<&str>, provider: Option<&str>, _npc: Option<&NPC>, output_path: &str) -> Result<HashMap<String, String>> {
+pub async fn gen_video(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    _npc: Option<&NPC>,
+    output_path: &str,
+) -> Result<HashMap<String, String>> {
     let model_str = model.unwrap_or("veo-3.1-fast-generate-preview");
     let provider_str = provider.unwrap_or("gemini");
     let mut result = HashMap::new();
@@ -733,7 +1012,11 @@ pub async fn gen_video(prompt: &str, model: Option<&str>, provider: Option<&str>
     if provider_str == "gemini" {
         let api_key = std::env::var("GOOGLE_API_KEY")
             .or_else(|_| std::env::var("GEMINI_API_KEY"))
-            .map_err(|_| NpcError::LlmRequest("GOOGLE_API_KEY or GEMINI_API_KEY not set for video gen".into()))?;
+            .map_err(|_| {
+                NpcError::LlmRequest(
+                    "GOOGLE_API_KEY or GEMINI_API_KEY not set for video gen".into(),
+                )
+            })?;
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             model_str, api_key
@@ -746,36 +1029,59 @@ pub async fn gen_video(prompt: &str, model: Option<&str>, provider: Option<&str>
         let resp = client.post(&url).json(&body).send().await?;
         if resp.status().is_success() {
             let data: serde_json::Value = resp.json().await?;
-            if let Some(b64) = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"].as_str() {
+            if let Some(b64) =
+                data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"].as_str()
+            {
                 use base64::Engine;
-                let bytes = base64::engine::general_purpose::STANDARD.decode(b64)
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
                     .map_err(|e| NpcError::Generation(format!("Base64 decode: {}", e)))?;
                 std::fs::write(output_path, &bytes)
                     .map_err(|e| NpcError::Generation(format!("Write video: {}", e)))?;
-                result.insert("output".into(), format!("Video generated at {}", output_path));
+                result.insert(
+                    "output".into(),
+                    format!("Video generated at {}", output_path),
+                );
             } else {
                 result.insert("output".into(), "No video data in response".into());
             }
         } else {
             let text = resp.text().await.unwrap_or_default();
-            result.insert("output".into(), format!("Video gen failed: {}", &text[..text.len().min(200)]));
+            result.insert(
+                "output".into(),
+                format!("Video gen failed: {}", &text[..text.len().min(200)]),
+            );
         }
     } else {
-        result.insert("output".into(), format!("Video generation not supported for provider '{}' in Rust. Use gemini.", provider_str));
+        result.insert(
+            "output".into(),
+            format!(
+                "Video generation not supported for provider '{}' in Rust. Use gemini.",
+                provider_str
+            ),
+        );
     }
     Ok(result)
 }
 
-pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<HashMap<String, serde_json::Value>> {
+pub async fn breathe(
+    messages: &[Message],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<HashMap<String, serde_json::Value>> {
     if messages.is_empty() {
         let mut r = HashMap::new();
         r.insert("output".into(), serde_json::json!({}));
         r.insert("messages".into(), serde_json::json!([]));
         return Ok(r);
     }
-    let conversation_text: String = messages.iter()
+    let conversation_text: String = messages
+        .iter()
         .filter_map(|m| m.content.as_ref().map(|c| format!("{}: {}", m.role, c)))
-        .collect::<Vec<_>>().join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         "Read the following conversation:\n\n\
@@ -799,20 +1105,35 @@ pub async fn breathe(messages: &[Message], model: Option<&str>, provider: Option
         "Here is a summary of the previous session. \
         The high level objective was: {} \n The accomplishments were: {}, \
         the failures were: {} and the most recent task was: {}",
-        res.get("high_level_objective").and_then(|v| v.as_str()).unwrap_or("?"),
+        res.get("high_level_objective")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
         res.get("accomplishments").unwrap_or(&serde_json::json!([])),
         res.get("failures").unwrap_or(&serde_json::json!([])),
-        res.get("most_recent_task").and_then(|v| v.as_str()).unwrap_or("?"),
+        res.get("most_recent_task")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
     );
     let mut r = HashMap::new();
     r.insert("output".into(), serde_json::Value::String(fmt.clone()));
     r.insert("summary".into(), res);
-    r.insert("messages".into(), serde_json::json!([{"role": "assistant", "content": fmt}]));
+    r.insert(
+        "messages".into(),
+        serde_json::json!([{"role": "assistant", "content": fmt}]),
+    );
     Ok(r)
 }
 
 #[async_recursion::async_recursion(?Send)]
-pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
+pub async fn get_facts(
+    content_text: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+    attempt_number: usize,
+    n_attempts: usize,
+) -> Result<Vec<serde_json::Value>> {
     let prompt = format!(
         "Extract facts from this text. A fact is a specific statement that can be sourced from the text.\n\n\
         Example: if text says \"the moon is the earth's only currently known satellite\", extract:\n\
@@ -884,26 +1205,55 @@ pub async fn get_facts(content_text: &str, model: Option<&str>, provider: Option
         content_text
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    let facts = result.get("facts").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+    let facts = result
+        .get("facts")
+        .and_then(|f| f.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     if facts.is_empty() && attempt_number < n_attempts {
-        tracing::info!("Attempt {} to extract facts yielded no results. Retrying...", attempt_number);
-        return get_facts(content_text, model, provider, npc, context, attempt_number + 1, n_attempts).await;
+        tracing::info!(
+            "Attempt {} to extract facts yielded no results. Retrying...",
+            attempt_number
+        );
+        return get_facts(
+            content_text,
+            model,
+            provider,
+            npc,
+            context,
+            attempt_number + 1,
+            n_attempts,
+        )
+        .await;
     }
     Ok(facts)
 }
 
 #[async_recursion::async_recursion(?Send)]
-pub async fn zoom_in(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<serde_json::Value>> {
-    let valid_facts: Vec<&serde_json::Value> = facts.iter()
+pub async fn zoom_in(
+    facts: &[serde_json::Value],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+    attempt_number: usize,
+    n_attempts: usize,
+) -> Result<Vec<serde_json::Value>> {
+    let valid_facts: Vec<&serde_json::Value> = facts
+        .iter()
         .filter(|f| f.get("statement").and_then(|s| s.as_str()).is_some())
         .collect();
-    if valid_facts.is_empty() { return Ok(vec![]); }
+    if valid_facts.is_empty() {
+        return Ok(vec![]);
+    }
 
-    let facts_text: String = valid_facts.iter()
+    let facts_text: String = valid_facts
+        .iter()
         .filter_map(|f| f.get("statement").and_then(|s| s.as_str()))
         .map(|s| format!("- {}", s))
-        .collect::<Vec<_>>().join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         "Look at these facts and infer new implied facts:\n\n\
@@ -921,15 +1271,34 @@ pub async fn zoom_in(facts: &[serde_json::Value], model: Option<&str>, provider:
         facts_text
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    let implied = result.get("implied_facts").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+    let implied = result
+        .get("implied_facts")
+        .and_then(|f| f.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     if implied.is_empty() && attempt_number < n_attempts {
-        return zoom_in(facts, model, provider, npc, context, attempt_number + 1, n_attempts).await;
+        return zoom_in(
+            facts,
+            model,
+            provider,
+            npc,
+            context,
+            attempt_number + 1,
+            n_attempts,
+        )
+        .await;
     }
     Ok(implied)
 }
 
-pub async fn identify_groups(facts: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn identify_groups(
+    facts: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<String>> {
     let prompt = format!(
         "What are the main groups these facts could be organized into?\n\
         Express these groups in plain, natural language.\n\n\
@@ -950,28 +1319,57 @@ pub async fn identify_groups(facts: &[String], model: Option<&str>, provider: Op
         serde_json::to_string(facts).unwrap_or_default()
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("groups").and_then(|g| g.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    Ok(result
+        .get("groups")
+        .and_then(|g| g.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
-pub async fn get_related_concepts_multi(node_name: &str, node_type: &str, all_concept_names: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn get_related_concepts_multi(
+    node_name: &str,
+    node_type: &str,
+    all_concept_names: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<String>> {
     let prompt = format!(
         "Which of the following concepts from the entire ontology relate to the given {}?\n\
         Select all that apply, from the most specific to the most abstract.\n\n\
         {}: \"{}\"\n\n\
         Available Concepts:\n{}\n\n\
         Respond with JSON: {{\"related_concepts\": [\"Concept A\", \"Concept B\", ...]}}",
-        node_type, node_type, node_name,
+        node_type,
+        node_type,
+        node_name,
         serde_json::to_string_pretty(all_concept_names).unwrap_or_default()
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("related_concepts").and_then(|c| c.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    Ok(result
+        .get("related_concepts")
+        .and_then(|c| c.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
-pub async fn assign_groups_to_fact(fact: &str, groups: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn assign_groups_to_fact(
+    fact: &str,
+    groups: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<String>> {
     let prompt = format!(
         "Given this fact, assign it to any relevant groups.\n\n\
         A fact can belong to multiple groups if it fits.\n\n\
@@ -985,12 +1383,27 @@ pub async fn assign_groups_to_fact(fact: &str, groups: &[String], model: Option<
         fact, groups
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("groups").and_then(|g| g.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    Ok(result
+        .get("groups")
+        .and_then(|g| g.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
-pub async fn generate_group_candidates(items: &[String], item_type: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, n_passes: usize, subset_size: usize) -> Result<Vec<String>> {
+pub async fn generate_group_candidates(
+    items: &[String],
+    item_type: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+    n_passes: usize,
+    subset_size: usize,
+) -> Result<Vec<String>> {
     let mut all_candidates: Vec<String> = Vec::new();
 
     for _pass in 0..n_passes {
@@ -1036,7 +1449,13 @@ pub async fn generate_group_candidates(items: &[String], item_type: &str, model:
     Ok(all_candidates)
 }
 
-pub async fn remove_idempotent_groups(group_candidates: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
+pub async fn remove_idempotent_groups(
+    group_candidates: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<String>> {
     let groups_json = serde_json::to_string(group_candidates).unwrap_or_default();
     let prompt = format!(
         "Compare these group names. Identify and list ONLY the groups that are conceptually distinct and specific.\n\n\
@@ -1068,16 +1487,30 @@ pub async fn remove_idempotent_groups(group_candidates: &[String], model: Option
         {{\"distinct_groups\": [\"list of specific, precise, and distinct group names to keep\"]}}",
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("distinct_groups").and_then(|g| g.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    Ok(result
+        .get("distinct_groups")
+        .and_then(|g| g.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
-pub async fn generate_groups(facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
-    let facts_text: String = facts.iter()
+pub async fn generate_groups(
+    facts: &[serde_json::Value],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<serde_json::Value>> {
+    let facts_text: String = facts
+        .iter()
         .filter_map(|f| f.get("statement").and_then(|s| s.as_str()))
         .map(|s| format!("- {}", s))
-        .collect::<Vec<_>>().join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         "Generate conceptual groups for this group of facts:\n\n\
@@ -1091,14 +1524,26 @@ pub async fn generate_groups(facts: &[serde_json::Value], model: Option<&str>, p
         facts_text
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default())
+    Ok(result
+        .get("groups")
+        .and_then(|g| g.as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
-pub async fn r#abstract(groups: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
-    let groups_text: String = groups.iter()
+pub async fn r#abstract(
+    groups: &[serde_json::Value],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<serde_json::Value>> {
+    let groups_text: String = groups
+        .iter()
         .filter_map(|g| g.get("name").and_then(|n| n.as_str()))
         .map(|n| format!("- \"{}\"", n))
-        .collect::<Vec<_>>().join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         "Create more abstract categories from this list of groups.\n\n\
@@ -1115,14 +1560,26 @@ pub async fn r#abstract(groups: &[serde_json::Value], model: Option<&str>, provi
         groups_text
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default())
+    Ok(result
+        .get("groups")
+        .and_then(|g| g.as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
-pub async fn remove_redundant_groups(groups: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
-    let groups_text: String = groups.iter()
+pub async fn remove_redundant_groups(
+    groups: &[serde_json::Value],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<serde_json::Value>> {
+    let groups_text: String = groups
+        .iter()
         .filter_map(|g| g.get("name").and_then(|n| n.as_str()))
         .map(|n| format!("- {}", n))
-        .collect::<Vec<_>>().join("\n");
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let prompt = format!(
         "Remove redundant groups from this list:\n\n\
@@ -1138,10 +1595,21 @@ pub async fn remove_redundant_groups(groups: &[serde_json::Value], model: Option
         groups_text
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default())
+    Ok(result
+        .get("groups")
+        .and_then(|g| g.as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
-pub async fn prune_fact_subset_llm(fact_subset: &[serde_json::Value], concept_name: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<serde_json::Value>> {
+pub async fn prune_fact_subset_llm(
+    fact_subset: &[serde_json::Value],
+    concept_name: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<serde_json::Value>> {
     let facts_json = serde_json::to_string_pretty(fact_subset).unwrap_or_default();
     let prompt = format!(
         "The following facts are all related to the concept \"{}\".\n\
@@ -1153,13 +1621,29 @@ pub async fn prune_fact_subset_llm(fact_subset: &[serde_json::Value], concept_na
         concept_name, facts_json
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("refined_facts").and_then(|f| f.as_array()).cloned().unwrap_or_default())
+    Ok(result
+        .get("refined_facts")
+        .and_then(|f| f.as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
-pub async fn consolidate_facts_llm(new_fact: &serde_json::Value, existing_facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<serde_json::Value> {
-    let new_stmt = new_fact.get("statement").and_then(|s| s.as_str()).unwrap_or("");
-    let existing: Vec<&str> = existing_facts.iter()
-        .filter_map(|f| f.get("statement").and_then(|s| s.as_str())).collect();
+pub async fn consolidate_facts_llm(
+    new_fact: &serde_json::Value,
+    existing_facts: &[serde_json::Value],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<serde_json::Value> {
+    let new_stmt = new_fact
+        .get("statement")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    let existing: Vec<&str> = existing_facts
+        .iter()
+        .filter_map(|f| f.get("statement").and_then(|s| s.as_str()))
+        .collect();
     let prompt = format!(
         "Analyze the \"New Fact\" in the context of the \"Existing Facts\" list.\n\
         Your task is to determine if the new fact provides genuinely new information or if it is essentially a repeat or minor rephrasing of information already present.\n\n\
@@ -1172,13 +1656,23 @@ pub async fn consolidate_facts_llm(new_fact: &serde_json::Value, existing_facts:
         - 'redundant': The fact repeats information already present in the existing facts.\n\n\
         Respond with a JSON object:\n\
         {{\"decision\": \"novel or redundant\", \"reason\": \"A brief explanation for your decision.\"}}",
-        new_stmt, serde_json::to_string_pretty(&existing).unwrap_or_default()
+        new_stmt,
+        serde_json::to_string_pretty(&existing).unwrap_or_default()
     );
     llm_call_json(&prompt, model, provider, npc, context).await
 }
 
 #[async_recursion::async_recursion(?Send)]
-pub async fn get_related_facts_llm(new_fact_statement: &str, existing_fact_statements: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>, attempt_number: usize, n_attempts: usize) -> Result<Vec<String>> {
+pub async fn get_related_facts_llm(
+    new_fact_statement: &str,
+    existing_fact_statements: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+    attempt_number: usize,
+    n_attempts: usize,
+) -> Result<Vec<String>> {
     let prompt = format!(
         "A new fact has been learned: \"{}\"\n\n\
         Which of the following existing facts are directly related to it \
@@ -1187,21 +1681,48 @@ pub async fn get_related_facts_llm(new_fact_statement: &str, existing_fact_state
         Existing Facts:\n{}\n\n\
         Respond with JSON:\n\
         {{\"related_facts\": [\"statement of a related fact\", ...]}}",
-        new_fact_statement, serde_json::to_string_pretty(existing_fact_statements).unwrap_or_default()
+        new_fact_statement,
+        serde_json::to_string_pretty(existing_fact_statements).unwrap_or_default()
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    let related = result.get("related_facts").and_then(|f| f.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+    let related = result
+        .get("related_facts")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
 
     if related.is_empty() && attempt_number < n_attempts {
-        tracing::info!("Attempt {} to find related facts yielded no results. Retrying...", attempt_number);
-        return get_related_facts_llm(new_fact_statement, existing_fact_statements, model, provider, npc, context, attempt_number + 1, n_attempts).await;
+        tracing::info!(
+            "Attempt {} to find related facts yielded no results. Retrying...",
+            attempt_number
+        );
+        return get_related_facts_llm(
+            new_fact_statement,
+            existing_fact_statements,
+            model,
+            provider,
+            npc,
+            context,
+            attempt_number + 1,
+            n_attempts,
+        )
+        .await;
     }
     Ok(related)
 }
 
-pub async fn find_best_link_concept_llm(candidate_concept_name: &str, existing_concept_names: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Option<String>> {
+pub async fn find_best_link_concept_llm(
+    candidate_concept_name: &str,
+    existing_concept_names: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Option<String>> {
     let prompt = format!(
         "Here is a new candidate concept: \"{}\"\n\n\
         Which of the following existing concepts is it most closely related to?\n\
@@ -1209,16 +1730,29 @@ pub async fn find_best_link_concept_llm(candidate_concept_name: &str, existing_c
         Existing Concepts:\n{}\n\n\
         Respond with the single best-fit concept to link to, or \"none\" if it is a genuinely new root idea.\n\
         {{\"best_link_concept\": \"The single best concept name OR none\"}}",
-        candidate_concept_name, serde_json::to_string_pretty(existing_concept_names).unwrap_or_default()
+        candidate_concept_name,
+        serde_json::to_string_pretty(existing_concept_names).unwrap_or_default()
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("best_link_concept").and_then(|v| v.as_str())
-        .map(String::from).filter(|v| v.to_lowercase() != "none"))
+    Ok(result
+        .get("best_link_concept")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .filter(|v| v.to_lowercase() != "none"))
 }
 
-pub async fn asymptotic_freedom(parent_concept_name: &str, supporting_facts: &[serde_json::Value], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<Vec<String>> {
-    let fact_statements: Vec<&str> = supporting_facts.iter()
-        .filter_map(|f| f.get("statement").and_then(|s| s.as_str())).collect();
+pub async fn asymptotic_freedom(
+    parent_concept_name: &str,
+    supporting_facts: &[serde_json::Value],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<Vec<String>> {
+    let fact_statements: Vec<&str> = supporting_facts
+        .iter()
+        .filter_map(|f| f.get("statement").and_then(|s| s.as_str()))
+        .collect();
     let prompt = format!(
         "The concept \"{}\" is supported by many diverse facts.\n\
         Propose a layer of 2-4 more specific sub-concepts to better organize these facts.\n\
@@ -1226,66 +1760,159 @@ pub async fn asymptotic_freedom(parent_concept_name: &str, supporting_facts: &[s
         Supporting Facts: {}\n\
         Respond with JSON:\n\
         {{\"new_sub_concepts\": [\"sub_layer1\", \"sub_layer2\"]}}",
-        parent_concept_name, parent_concept_name,
+        parent_concept_name,
+        parent_concept_name,
         serde_json::to_string_pretty(&fact_statements).unwrap_or_default()
     );
     let result = llm_call_json(&prompt, model, provider, npc, context).await?;
-    Ok(result.get("new_sub_concepts").and_then(|f| f.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    Ok(result
+        .get("new_sub_concepts")
+        .and_then(|f| f.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
-pub async fn bootstrap(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, n_samples: usize, context: Option<&str>) -> Result<String> {
+pub async fn bootstrap(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    n_samples: usize,
+    context: Option<&str>,
+) -> Result<String> {
     let mut results = Vec::new();
     for i in 0..n_samples {
-        results.push(llm_call(
-            &format!("Sample {}: {}", i + 1, prompt),
-            model, provider, npc, context,
-        ).await?);
+        results.push(
+            llm_call(
+                &format!("Sample {}: {}", i + 1, prompt),
+                model,
+                provider,
+                npc,
+                context,
+            )
+            .await?,
+        );
     }
-    let combined = results.iter().enumerate()
+    let combined = results
+        .iter()
+        .enumerate()
         .map(|(i, r)| format!("Response {}: {}", i + 1, r))
-        .collect::<Vec<_>>().join("\n\n");
+        .collect::<Vec<_>>()
+        .join("\n\n");
     synthesize(&combined, model, provider, npc, context).await
 }
 
-pub async fn harmonize(prompt: &str, items: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, harmony_rules: Option<&[String]>, context: Option<&str>) -> Result<String> {
-    let items_text = items.iter().enumerate()
-        .map(|(i, s)| format!("{}. {}", i + 1, s)).collect::<Vec<_>>().join("\n");
-    let rules = harmony_rules.map(|r| r.join(", ")).unwrap_or_else(|| "maintain_consistency".into());
+pub async fn harmonize(
+    prompt: &str,
+    items: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    harmony_rules: Option<&[String]>,
+    context: Option<&str>,
+) -> Result<String> {
+    let items_text = items
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{}. {}", i + 1, s))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let rules = harmony_rules
+        .map(|r| r.join(", "))
+        .unwrap_or_else(|| "maintain_consistency".into());
     llm_call(
-        &format!("Harmonize these items: {}\nTask: {}\nRules: {}", items_text, prompt, rules),
-        model, provider, npc, context,
-    ).await
+        &format!(
+            "Harmonize these items: {}\nTask: {}\nRules: {}",
+            items_text, prompt, rules
+        ),
+        model,
+        provider,
+        npc,
+        context,
+    )
+    .await
 }
 
-pub async fn orchestrate(prompt: &str, items: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, workflow: &str, context: Option<&str>) -> Result<String> {
-    let items_text = items.iter().enumerate()
-        .map(|(i, s)| format!("{}. {}", i + 1, s)).collect::<Vec<_>>().join("\n");
+pub async fn orchestrate(
+    prompt: &str,
+    items: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    workflow: &str,
+    context: Option<&str>,
+) -> Result<String> {
+    let items_text = items
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{}. {}", i + 1, s))
+        .collect::<Vec<_>>()
+        .join("\n");
     llm_call(
-        &format!("Orchestrate using {}:\nTask: {}\nItems: {}", workflow, prompt, items_text),
-        model, provider, npc, context,
-    ).await
+        &format!(
+            "Orchestrate using {}:\nTask: {}\nItems: {}",
+            workflow, prompt, items_text
+        ),
+        model,
+        provider,
+        npc,
+        context,
+    )
+    .await
 }
 
-pub async fn spread_and_sync(prompt: &str, variations: &[String], model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, sync_strategy: &str, context: Option<&str>) -> Result<String> {
+pub async fn spread_and_sync(
+    prompt: &str,
+    variations: &[String],
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    sync_strategy: &str,
+    context: Option<&str>,
+) -> Result<String> {
     let mut results = Vec::new();
     for v in variations {
-        results.push(llm_call(
-            &format!("Analyze from {} perspective:\nTask: {}", v, prompt),
-            model, provider, npc, context,
-        ).await?);
+        results.push(
+            llm_call(
+                &format!("Analyze from {} perspective:\nTask: {}", v, prompt),
+                model,
+                provider,
+                npc,
+                context,
+            )
+            .await?,
+        );
     }
-    let combined = results.iter().enumerate()
+    let combined = results
+        .iter()
+        .enumerate()
         .map(|(i, r)| format!("Response {}: {}", i + 1, r))
-        .collect::<Vec<_>>().join("\n\n");
+        .collect::<Vec<_>>()
+        .join("\n\n");
     llm_call(
-        &format!("Synthesize these multiple perspectives:\n{}\n\nSynthesis strategy: {}", combined, sync_strategy),
-        model, provider, npc, context,
-    ).await
+        &format!(
+            "Synthesize these multiple perspectives:\n{}\n\nSynthesis strategy: {}",
+            combined, sync_strategy
+        ),
+        model,
+        provider,
+        npc,
+        context,
+    )
+    .await
 }
 
-pub async fn criticize(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<String> {
+pub async fn criticize(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<String> {
     llm_call(
         &format!(
             "Provide a critical analysis and constructive criticism of the following:\n{}\n\n\
@@ -1293,19 +1920,33 @@ pub async fn criticize(prompt: &str, model: Option<&str>, provider: Option<&str>
             Be specific and provide actionable feedback.",
             prompt
         ),
-        model, provider, npc, context,
-    ).await
+        model,
+        provider,
+        npc,
+        context,
+    )
+    .await
 }
 
-pub async fn synthesize(prompt: &str, model: Option<&str>, provider: Option<&str>, npc: Option<&NPC>, context: Option<&str>) -> Result<String> {
+pub async fn synthesize(
+    prompt: &str,
+    model: Option<&str>,
+    provider: Option<&str>,
+    npc: Option<&NPC>,
+    context: Option<&str>,
+) -> Result<String> {
     llm_call(
         &format!(
             "Synthesize this content:\n{}\n\n\
             Create a clear, concise synthesis that captures the essence of the content.",
             prompt
         ),
-        model, provider, npc, context,
-    ).await
+        model,
+        provider,
+        npc,
+        context,
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -14,8 +14,7 @@ impl CommandRouter {
 
     pub fn register_jinx(&mut self, jinx: &Jinx) {
         if !jinx.name.is_empty() {
-            self.routes
-                .insert(jinx.name.clone(), jinx.name.clone());
+            self.routes.insert(jinx.name.clone(), jinx.name.clone());
         }
     }
 

@@ -1,10 +1,9 @@
-
 use crate::npc_compiler::NPC;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 pub type Pid = u32;
 
@@ -150,10 +149,7 @@ impl ResourceUsage {
         if let Some(budget) = limits.total_token_budget {
             let total = self.total_input_tokens + self.total_output_tokens;
             if total >= budget {
-                return Some(format!(
-                    "Token budget exhausted: {} / {}",
-                    total, budget
-                ));
+                return Some(format!("Token budget exhausted: {} / {}", total, budget));
             }
         }
         if let Some(max_cost) = limits.max_cost_usd {

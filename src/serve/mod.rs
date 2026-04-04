@@ -1,17 +1,17 @@
 use crate::error::{NpcError, Result};
-use crate::npc_compiler;
 use crate::r#gen::Message;
+use crate::npc_compiler;
 use crate::npc_compiler::Team;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use axum::{
-    extract::{Json, State, Path as AxumPath},
+    Router,
+    extract::{Json, Path as AxumPath, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
 };
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct ServerConfig {
     pub http_port: u16,
@@ -42,7 +42,10 @@ fn json_response(value: serde_json::Value) -> impl IntoResponse {
 }
 
 fn error_response(msg: &str) -> impl IntoResponse {
-    (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": msg})))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": msg})),
+    )
 }
 
 pub fn create_app(state: AppState) -> Router {
@@ -57,7 +60,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/jinx", post(execute_jinx))
         .route("/api/models", get(get_models))
         .route("/api/conversations", get(list_conversations))
-        .route("/api/conversations", post(create_conversation).get(list_conversations))
+        .route(
+            "/api/conversations",
+            post(create_conversation).get(list_conversations),
+        )
         .route("/api/search", post(search))
         .route("/api/image", post(generate_image))
         .route("/api/tts", post(tts))
@@ -69,7 +75,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/kg/facts", get(get_kg_facts))
         .route("/api/kg/concepts", get(get_kg_concepts))
         .route("/api/kg/node", post(add_kg_node))
-        .route("/api/kg/node/:node_id", post(update_kg_node).delete(delete_kg_node))
+        .route(
+            "/api/kg/node/:node_id",
+            post(update_kg_node).delete(delete_kg_node),
+        )
         .route("/api/kg/edge", post(add_kg_edge))
         .route("/api/kg/process", post(trigger_kg_process))
         .route("/api/kg/ingest", post(ingest_to_kg))
@@ -78,17 +87,32 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/jinx/delete", post(delete_jinx))
         .route("/api/jinx/test", post(test_jinx))
         .route("/api/attachments/:message_id", get(get_attachments))
-        .route("/api/settings/global", get(get_global_settings).post(save_global_settings))
-        .route("/api/settings/project", get(get_project_settings).post(save_project_settings))
+        .route(
+            "/api/settings/global",
+            get(get_global_settings).post(save_global_settings),
+        )
+        .route(
+            "/api/settings/project",
+            get(get_project_settings).post(save_project_settings),
+        )
         .route("/api/memories/extract", post(extract_memories))
         .route("/api/command/:command", post(api_command))
         .route("/api/capture", post(capture))
         .route("/api/memories/pending", get(get_pending_memories_route))
         .route("/api/memories/approve", post(approve_memories))
         .route("/api/memories/search", post(search_memories))
-        .route("/api/conversations/search", post(search_conversations_route))
-        .route("/api/conversations/:id/messages", get(get_conversation_messages))
-        .route("/api/conversations/:id/messages/:msg_id", axum::routing::delete(delete_message))
+        .route(
+            "/api/conversations/search",
+            post(search_conversations_route),
+        )
+        .route(
+            "/api/conversations/:id/messages",
+            get(get_conversation_messages),
+        )
+        .route(
+            "/api/conversations/:id/messages/:msg_id",
+            axum::routing::delete(delete_message),
+        )
         .route("/api/npc/save", post(save_npc))
         .route("/api/team/sync/status", get(team_sync_status))
         .route("/api/team/sync/init", post(team_sync_init))
@@ -123,7 +147,10 @@ async fn get_npcs(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({"npcs": npcs}))
 }
 
-async fn switch_npc(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn switch_npc(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let name = body["npc"].as_str().unwrap_or("");
     let mut state = state.lock().await;
     if state.team.get_npc(name).is_some() {
@@ -140,7 +167,10 @@ async fn get_jinxes(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({"jinxes": jinxes}))
 }
 
-async fn chat(State(state_arc): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn chat(
+    State(state_arc): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let input = body["message"].as_str().unwrap_or("").to_string();
     let npc_name = body["npc"].as_str().map(String::from);
     let conversation_id = body["conversation_id"].as_str().map(String::from);
@@ -150,7 +180,11 @@ async fn chat(State(state_arc): State<AppState>, Json(body): Json<serde_json::Va
         let name = npc_name.as_deref().unwrap_or(&state.active_npc_name);
         let npc = state.team.get_npc(name).cloned();
         let conv_id = conversation_id.unwrap_or_else(|| "default".to_string());
-        let prev = state.conversations.get(&conv_id).cloned().unwrap_or_default();
+        let prev = state
+            .conversations
+            .get(&conv_id)
+            .cloned()
+            .unwrap_or_default();
         let ctx = state.team.context.clone();
         (npc, prev, conv_id, ctx)
     };
@@ -162,17 +196,30 @@ async fn chat(State(state_arc): State<AppState>, Json(body): Json<serde_json::Va
         messages.push(Message::user(&input));
 
         match crate::r#gen::get_genai_response(
-            &npc.resolved_provider(), &npc.resolved_model(),
-            &messages, None, npc.api_url.as_deref(),
-        ).await {
+            &npc.resolved_provider(),
+            &npc.resolved_model(),
+            &messages,
+            None,
+            npc.api_url.as_deref(),
+        )
+        .await
+        {
             Ok(resp) => {
                 let output = resp.message.content.clone().unwrap_or_default();
                 let mut state = state_arc.lock().await;
                 let existing = state.conversations.entry(conv_id.clone()).or_default();
                 existing.push(Message::user(&input));
-                existing.push(Message { role: "assistant".into(), content: Some(output.clone()), tool_calls: None, tool_call_id: None, name: None });
+                existing.push(Message {
+                    role: "assistant".into(),
+                    content: Some(output.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                });
                 let usage = resp.usage.as_ref().map(|u| serde_json::json!({"input_tokens": u.prompt_tokens, "output_tokens": u.completion_tokens}));
-                Json(serde_json::json!({"response": output, "conversation_id": conv_id, "usage": usage}))
+                Json(
+                    serde_json::json!({"response": output, "conversation_id": conv_id, "usage": usage}),
+                )
             }
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         }
@@ -181,18 +228,36 @@ async fn chat(State(state_arc): State<AppState>, Json(body): Json<serde_json::Va
     }
 }
 
-async fn check_command(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn check_command(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let command = body["command"].as_str().unwrap_or("").to_string();
     let (npc, jinxes) = {
         let s = state.lock().await;
-        (s.team.get_npc(&s.active_npc_name).cloned(), s.team.jinxes.clone())
+        (
+            s.team.get_npc(&s.active_npc_name).cloned(),
+            s.team.jinxes.clone(),
+        )
     };
 
     if let Some(npc) = npc {
         let model = npc.resolved_model();
         let provider = npc.resolved_provider();
-        match crate::llm_funcs::get_llm_response(&command, Some(&npc), Some(&model), Some(&provider), None, &[], None).await {
-            Ok(result) => Json(serde_json::json!({"output": result.response, "model": result.model, "provider": result.provider})),
+        match crate::llm_funcs::get_llm_response(
+            &command,
+            Some(&npc),
+            Some(&model),
+            Some(&provider),
+            None,
+            &[],
+            None,
+        )
+        .await
+        {
+            Ok(result) => Json(
+                serde_json::json!({"output": result.response, "model": result.model, "provider": result.provider}),
+            ),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         }
     } else {
@@ -200,10 +265,18 @@ async fn check_command(State(state): State<AppState>, Json(body): Json<serde_jso
     }
 }
 
-async fn execute_jinx(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn execute_jinx(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let jinx_name = body["jinx"].as_str().unwrap_or("");
-    let args: HashMap<String, String> = body["args"].as_object()
-        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+    let args: HashMap<String, String> = body["args"]
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
         .unwrap_or_default();
 
     let state = state.lock().await;
@@ -217,9 +290,15 @@ async fn execute_jinx(State(state): State<AppState>, Json(body): Json<serde_json
 
 async fn get_models() -> impl IntoResponse {
     let mut models: HashMap<&str, Vec<&str>> = HashMap::new();
-    if std::env::var("OPENAI_API_KEY").is_ok() { models.insert("openai", vec!["gpt-4o", "gpt-4o-mini"]); }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() { models.insert("anthropic", vec!["claude-sonnet-4", "claude-haiku-4"]); }
-    if std::env::var("GEMINI_API_KEY").is_ok() || std::env::var("GOOGLE_API_KEY").is_ok() { models.insert("gemini", vec!["gemini-2.5-flash", "gemini-2.5-pro"]); }
+    if std::env::var("OPENAI_API_KEY").is_ok() {
+        models.insert("openai", vec!["gpt-4o", "gpt-4o-mini"]);
+    }
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        models.insert("anthropic", vec!["claude-sonnet-4", "claude-haiku-4"]);
+    }
+    if std::env::var("GEMINI_API_KEY").is_ok() || std::env::var("GOOGLE_API_KEY").is_ok() {
+        models.insert("gemini", vec!["gemini-2.5-flash", "gemini-2.5-pro"]);
+    }
     models.insert("ollama", vec!["llama3.2", "qwen3.5:2b"]);
     Json(serde_json::json!({"models": models}))
 }
@@ -243,7 +322,10 @@ async fn search(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let num = body["num_results"].as_u64().unwrap_or(5) as usize;
     match crate::data::web::search_web(query, num, provider, None).await {
         Ok(results) => {
-            let items: Vec<serde_json::Value> = results.iter().map(|r| serde_json::json!({"title": r.title, "url": r.url, "snippet": r.snippet})).collect();
+            let items: Vec<serde_json::Value> = results
+                .iter()
+                .map(|r| serde_json::json!({"title": r.title, "url": r.url, "snippet": r.snippet}))
+                .collect();
             Json(serde_json::json!({"results": items}))
         }
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
@@ -254,7 +336,9 @@ async fn generate_image(Json(body): Json<serde_json::Value>) -> impl IntoRespons
     let prompt = body["prompt"].as_str().unwrap_or("");
     let model = body["model"].as_str().unwrap_or("dall-e-3");
     let provider = body["provider"].as_str().unwrap_or("openai");
-    match crate::llm_funcs::gen_image(prompt, Some(model), Some(provider), None, 1024, 1024, None).await {
+    match crate::llm_funcs::gen_image(prompt, Some(model), Some(provider), None, 1024, 1024, None)
+        .await
+    {
         Ok(img) => {
             use base64::Engine;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&img.data);
@@ -303,11 +387,20 @@ async fn get_settings(State(state): State<AppState>) -> impl IntoResponse {
     }))
 }
 
-async fn save_settings(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn save_settings(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let mut state = state.lock().await;
-    if let Some(npc) = body["active_npc"].as_str() { state.active_npc_name = npc.to_string(); }
-    if let Some(model) = body["model"].as_str() { state.team.model = Some(model.to_string()); }
-    if let Some(provider) = body["provider"].as_str() { state.team.provider = Some(provider.to_string()); }
+    if let Some(npc) = body["active_npc"].as_str() {
+        state.active_npc_name = npc.to_string();
+    }
+    if let Some(model) = body["model"].as_str() {
+        state.team.model = Some(model.to_string());
+    }
+    if let Some(provider) = body["provider"].as_str() {
+        state.team.provider = Some(provider.to_string());
+    }
     Json(serde_json::json!({"status": "updated"}))
 }
 
@@ -339,10 +432,15 @@ async fn add_kg_node(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let name = body["name"].as_str().unwrap_or("");
     let node_type = body["type"].as_str().unwrap_or("Entity");
     let content = body["content"].as_str().unwrap_or("");
-    Json(serde_json::json!({"status": "added", "name": name, "type": node_type, "content": content}))
+    Json(
+        serde_json::json!({"status": "added", "name": name, "type": node_type, "content": content}),
+    )
 }
 
-async fn update_kg_node(AxumPath(node_id): AxumPath<String>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn update_kg_node(
+    AxumPath(node_id): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     Json(serde_json::json!({"status": "updated", "node_id": node_id}))
 }
 
@@ -354,7 +452,9 @@ async fn add_kg_edge(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let source = body["source"].as_str().unwrap_or("");
     let target = body["target"].as_str().unwrap_or("");
     let relation = body["relation"].as_str().unwrap_or("related_to");
-    Json(serde_json::json!({"status": "added", "source": source, "target": target, "relation": relation}))
+    Json(
+        serde_json::json!({"status": "added", "source": source, "target": target, "relation": relation}),
+    )
 }
 
 async fn trigger_kg_process(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
@@ -373,7 +473,10 @@ async fn query_kg(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     Json(serde_json::json!({"query": query, "mode": mode, "results": []}))
 }
 
-async fn save_jinx(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn save_jinx(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let name = body["name"].as_str().unwrap_or("");
     let description = body["description"].as_str().unwrap_or("");
     let state = state.lock().await;
@@ -391,11 +494,16 @@ async fn save_jinx(State(state): State<AppState>, Json(body): Json<serde_json::V
     }
 }
 
-async fn delete_jinx(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn delete_jinx(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let name = body["name"].as_str().unwrap_or("");
     let state = state.lock().await;
     if let Some(dir) = &state.team.source_dir {
-        let path = std::path::Path::new(dir).join("jinxes").join(format!("{}.jinx", name));
+        let path = std::path::Path::new(dir)
+            .join("jinxes")
+            .join(format!("{}.jinx", name));
         match std::fs::remove_file(&path) {
             Ok(_) => Json(serde_json::json!({"status": "deleted"})),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
@@ -405,15 +513,25 @@ async fn delete_jinx(State(state): State<AppState>, Json(body): Json<serde_json:
     }
 }
 
-async fn test_jinx(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn test_jinx(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let jinx_name = body["jinx"].as_str().unwrap_or("");
-    let args: HashMap<String, String> = body["args"].as_object()
-        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+    let args: HashMap<String, String> = body["args"]
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     let state = state.lock().await;
     if let Some(j) = state.team.jinxes.get(jinx_name) {
         let result = j.execute(&args);
-        Json(serde_json::json!({"output": result.output, "success": result.success, "error": result.error}))
+        Json(
+            serde_json::json!({"output": result.output, "success": result.success, "error": result.error}),
+        )
     } else {
         Json(serde_json::json!({"error": format!("Jinx '{}' not found", jinx_name)}))
     }
@@ -441,7 +559,9 @@ async fn get_global_settings() -> impl IntoResponse {
 async fn save_global_settings(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let content = body["settings"].as_str().unwrap_or("");
     let rc_path = crate::npc_sysenv::get_npcshrc_path();
-    if let Some(parent) = rc_path.parent() { let _ = std::fs::create_dir_all(parent); }
+    if let Some(parent) = rc_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     match std::fs::write(&rc_path, content) {
         Ok(_) => Json(serde_json::json!({"status": "saved"})),
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
@@ -460,28 +580,46 @@ async fn get_project_settings(State(state): State<AppState>) -> impl IntoRespons
     }))
 }
 
-async fn save_project_settings(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn save_project_settings(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let mut state = state.lock().await;
-    if let Some(model) = body["model"].as_str() { state.team.model = Some(model.to_string()); }
-    if let Some(provider) = body["provider"].as_str() { state.team.provider = Some(provider.to_string()); }
-    if let Some(context) = body["context"].as_str() { state.team.context = Some(context.to_string()); }
+    if let Some(model) = body["model"].as_str() {
+        state.team.model = Some(model.to_string());
+    }
+    if let Some(provider) = body["provider"].as_str() {
+        state.team.provider = Some(provider.to_string());
+    }
+    if let Some(context) = body["context"].as_str() {
+        state.team.context = Some(context.to_string());
+    }
     Json(serde_json::json!({"status": "saved"}))
 }
 
-async fn extract_memories(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn extract_memories(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let messages = body["messages"].as_array();
     let npc_name = body["npc"].as_str().unwrap_or("assistant");
     let model = body["model"].as_str();
     let provider = body["provider"].as_str();
 
     if let Some(msgs) = messages {
-        let conversation: String = msgs.iter()
+        let conversation: String = msgs
+            .iter()
             .filter_map(|m| {
                 let role = m["role"].as_str().unwrap_or("");
                 let content = m["content"].as_str().unwrap_or("");
-                if content.is_empty() { None } else { Some(format!("{}: {}", role, content)) }
+                if content.is_empty() {
+                    None
+                } else {
+                    Some(format!("{}: {}", role, content))
+                }
             })
-            .collect::<Vec<_>>().join("\n");
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let m = model.unwrap_or("qwen3.5:2b");
         let p = provider.unwrap_or("ollama");
@@ -489,9 +627,25 @@ async fn extract_memories(State(state): State<AppState>, Json(body): Json<serde_
             "Extract memories from this conversation that would be useful to remember about the user.\n\n{}\n\nReturn JSON: {{\"memories\": [\"memory1\", \"memory2\"]}}",
             conversation
         );
-        match crate::llm_funcs::get_llm_response_ext(&prompt, None, Some(m), Some(p), None, &[], None, Some("json"), None, false).await {
+        match crate::llm_funcs::get_llm_response_ext(
+            &prompt,
+            None,
+            Some(m),
+            Some(p),
+            None,
+            &[],
+            None,
+            Some("json"),
+            None,
+            false,
+        )
+        .await
+        {
             Ok(result) => {
-                let memories = result.response_json.and_then(|j| j.get("memories").and_then(|m| m.as_array()).cloned()).unwrap_or_default();
+                let memories = result
+                    .response_json
+                    .and_then(|j| j.get("memories").and_then(|m| m.as_array()).cloned())
+                    .unwrap_or_default();
                 Json(serde_json::json!({"memories": memories, "npc": npc_name}))
             }
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
@@ -501,15 +655,34 @@ async fn extract_memories(State(state): State<AppState>, Json(body): Json<serde_
     }
 }
 
-async fn api_command(State(state): State<AppState>, AxumPath(command): AxumPath<String>) -> impl IntoResponse {
+async fn api_command(
+    State(state): State<AppState>,
+    AxumPath(command): AxumPath<String>,
+) -> impl IntoResponse {
     let (npc, model, provider) = {
         let s = state.lock().await;
         let npc = s.team.get_npc(&s.active_npc_name).cloned();
-        let m = npc.as_ref().map(|n| n.resolved_model()).unwrap_or_else(|| "qwen3.5:2b".into());
-        let p = npc.as_ref().map(|n| n.resolved_provider()).unwrap_or_else(|| "ollama".into());
+        let m = npc
+            .as_ref()
+            .map(|n| n.resolved_model())
+            .unwrap_or_else(|| "qwen3.5:2b".into());
+        let p = npc
+            .as_ref()
+            .map(|n| n.resolved_provider())
+            .unwrap_or_else(|| "ollama".into());
         (npc, m, p)
     };
-    match crate::llm_funcs::get_llm_response(&command, npc.as_ref(), Some(&model), Some(&provider), None, &[], None).await {
+    match crate::llm_funcs::get_llm_response(
+        &command,
+        npc.as_ref(),
+        Some(&model),
+        Some(&provider),
+        None,
+        &[],
+        None,
+    )
+    .await
+    {
         Ok(result) => Json(serde_json::json!({"response": result.response, "model": result.model})),
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
@@ -519,7 +692,9 @@ async fn get_pending_memories_route() -> impl IntoResponse {
     let db_path = crate::npc_sysenv::get_history_db_path();
     match crate::memory::CommandHistory::open(&db_path) {
         Ok(h) => match h.get_pending_memories() {
-            Ok(mems) => Json(serde_json::json!({"memories": mems.iter().map(|(id, npc, content)| serde_json::json!({"id": id, "npc": npc, "content": content})).collect::<Vec<_>>()})),
+            Ok(mems) => Json(
+                serde_json::json!({"memories": mems.iter().map(|(id, npc, content)| serde_json::json!({"id": id, "npc": npc, "content": content})).collect::<Vec<_>>()}),
+            ),
             Err(e) => Json(serde_json::json!({"error": e.to_string()})),
         },
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
@@ -588,7 +763,9 @@ async fn get_conversation_messages(AxumPath(id): AxumPath<String>) -> impl IntoR
     }
 }
 
-async fn delete_message(AxumPath((conv_id, msg_id)): AxumPath<(String, String)>) -> impl IntoResponse {
+async fn delete_message(
+    AxumPath((conv_id, msg_id)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
     let db_path = crate::npc_sysenv::get_history_db_path();
     match crate::memory::CommandHistory::open(&db_path) {
         Ok(h) => match h.delete_message(&conv_id, &msg_id) {
@@ -599,7 +776,10 @@ async fn delete_message(AxumPath((conv_id, msg_id)): AxumPath<(String, String)>)
     }
 }
 
-async fn save_npc(State(state): State<AppState>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+async fn save_npc(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
     let name = body["name"].as_str().unwrap_or("");
     let state = state.lock().await;
     if let Some(npc) = state.team.get_npc(name) {
@@ -703,10 +883,12 @@ async fn get_jinx_executions_route(Json(body): Json<serde_json::Value>) -> impl 
 pub async fn start_http_server(state: AppState, config: &ServerConfig) -> Result<()> {
     let app = create_app(state);
     let addr = format!("{}:{}", config.host, config.http_port);
-    let listener = tokio::net::TcpListener::bind(&addr).await
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
         .map_err(|e| NpcError::Other(format!("Bind {}: {}", addr, e)))?;
     tracing::info!("NPC server on {}", addr);
-    axum::serve(listener, app).await
+    axum::serve(listener, app)
+        .await
         .map_err(|e| NpcError::Other(format!("Server: {}", e)))?;
     Ok(())
 }
@@ -721,11 +903,18 @@ pub async fn start_mcp_server(state: AppState) -> Result<()> {
     let mut line = String::new();
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await.map_err(|e| NpcError::Other(e.to_string()))?;
-        if n == 0 { break; }
+        let n = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| NpcError::Other(e.to_string()))?;
+        if n == 0 {
+            break;
+        }
 
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
 
         let request: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
@@ -750,7 +939,8 @@ pub async fn start_mcp_server(state: AppState) -> Result<()> {
                 } else {
                     state.team.jinx_names()
                 };
-                let tools: Vec<serde_json::Value> = jinx_names.iter()
+                let tools: Vec<serde_json::Value> = jinx_names
+                    .iter()
                     .filter_map(|name| state.team.jinxes.get(*name))
                     .filter_map(|jinx| jinx.to_tool_def())
                     .map(|td| serde_json::to_value(&td).unwrap_or_default())
@@ -759,8 +949,13 @@ pub async fn start_mcp_server(state: AppState) -> Result<()> {
             }
             "tools/call" => {
                 let tool_name = params["name"].as_str().unwrap_or("");
-                let args: HashMap<String, String> = params["arguments"].as_object()
-                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+                let args: HashMap<String, String> = params["arguments"]
+                    .as_object()
+                    .map(|obj| {
+                        obj.iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let state = state.lock().await;
                 if let Some(j) = state.team.jinxes.get(tool_name) {
@@ -778,24 +973,42 @@ pub async fn start_mcp_server(state: AppState) -> Result<()> {
                 serde_json::json!({"prompts": prompts})
             }
             "notifications/initialized" => continue,
-            _ => serde_json::json!({"error": {"code": -32601, "message": format!("Method not found: {}", method)}}),
+            _ => {
+                serde_json::json!({"error": {"code": -32601, "message": format!("Method not found: {}", method)}})
+            }
         };
 
         if let Some(id) = id {
             let response = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
             let s = serde_json::to_string(&response).unwrap_or_default();
             let header = format!("Content-Length: {}\r\n\r\n", s.len());
-            stdout.write_all(header.as_bytes()).await.map_err(|e| NpcError::Other(e.to_string()))?;
-            stdout.write_all(s.as_bytes()).await.map_err(|e| NpcError::Other(e.to_string()))?;
-            stdout.flush().await.map_err(|e| NpcError::Other(e.to_string()))?;
+            stdout
+                .write_all(header.as_bytes())
+                .await
+                .map_err(|e| NpcError::Other(e.to_string()))?;
+            stdout
+                .write_all(s.as_bytes())
+                .await
+                .map_err(|e| NpcError::Other(e.to_string()))?;
+            stdout
+                .flush()
+                .await
+                .map_err(|e| NpcError::Other(e.to_string()))?;
         }
     }
     Ok(())
 }
 
 pub async fn start_servers(team: Team, config: ServerConfig) -> Result<()> {
-    let active_npc = team.lead_npc().map(|n| n.name.clone()).unwrap_or_else(|| "assistant".to_string());
-    let state = Arc::new(Mutex::new(ServerState { team, active_npc_name: active_npc, conversations: HashMap::new() }));
+    let active_npc = team
+        .lead_npc()
+        .map(|n| n.name.clone())
+        .unwrap_or_else(|| "assistant".to_string());
+    let state = Arc::new(Mutex::new(ServerState {
+        team,
+        active_npc_name: active_npc,
+        conversations: HashMap::new(),
+    }));
 
     if config.mcp_enabled {
         let http_state = Arc::clone(&state);

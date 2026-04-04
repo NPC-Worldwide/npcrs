@@ -1,12 +1,11 @@
-
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
 use crate::memory::CommandHistory;
 use crate::npc_compiler::NPC;
-use crate::shell::{ShellMode, ShellState};
 use crate::npc_compiler::Team;
+use crate::shell::{ShellMode, ShellState};
 
 fn to_c_string(s: &str) -> *mut c_char {
     CString::new(s).unwrap_or_default().into_raw()
@@ -126,8 +125,7 @@ pub extern "C" fn npcrs_npc_system_prompt(
     } else {
         Some(unsafe { from_c_str(team_context) })
     };
-    let prompt =
-        unsafe { &*npc }.system_prompt(team_ctx.as_deref());
+    let prompt = unsafe { &*npc }.system_prompt(team_ctx.as_deref());
     to_c_string(&prompt)
 }
 
@@ -141,10 +139,7 @@ pub extern "C" fn npcrs_npc_to_json(npc: *const NPC) -> *mut c_char {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn npcrs_shell_create(
-    team: *mut Team,
-    db_path: *const c_char,
-) -> *mut ShellState {
+pub extern "C" fn npcrs_shell_create(team: *mut Team, db_path: *const c_char) -> *mut ShellState {
     if team.is_null() {
         return ptr::null_mut();
     }
@@ -244,10 +239,7 @@ pub extern "C" fn npcrs_shell_set_model(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn npcrs_set_api_key(
-    key_name: *const c_char,
-    key_value: *const c_char,
-) {
+pub extern "C" fn npcrs_set_api_key(key_name: *const c_char, key_value: *const c_char) {
     if key_name.is_null() || key_value.is_null() {
         return;
     }

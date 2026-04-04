@@ -1,7 +1,6 @@
-
 use crate::error::{NpcError, Result};
-use crate::npc_compiler;
 use crate::kernel::Kernel;
+use crate::npc_compiler;
 use crate::process::Pid;
 use std::collections::HashMap;
 
@@ -11,15 +10,13 @@ pub async fn execute_syscall(
     jinx_name: &str,
     args: &HashMap<String, String>,
 ) -> Result<String> {
-    let process = kernel.processes.get(&pid).ok_or_else(|| {
-        NpcError::Other(format!("ESRCH: no process with pid {}", pid))
-    })?;
+    let process = kernel
+        .processes
+        .get(&pid)
+        .ok_or_else(|| NpcError::Other(format!("ESRCH: no process with pid {}", pid)))?;
 
     if process.state == crate::process::ProcessState::Dead {
-        return Err(NpcError::Other(format!(
-            "ESRCH: process {} is dead",
-            pid
-        )));
+        return Err(NpcError::Other(format!("ESRCH: process {} is dead", pid)));
     }
 
     if !process.capabilities.can_run_jinx(jinx_name) {
@@ -43,11 +40,12 @@ pub async fn execute_syscall(
         )));
     }
 
-    let jinx = kernel.jinxes.get(jinx_name).ok_or_else(|| {
-        NpcError::JinxNotFound {
+    let jinx = kernel
+        .jinxes
+        .get(jinx_name)
+        .ok_or_else(|| NpcError::JinxNotFound {
             name: jinx_name.to_string(),
-        }
-    })?;
+        })?;
 
     tracing::debug!(
         "syscall: pid:{} invoking jinx '{}' with {} args",
@@ -63,9 +61,16 @@ pub async fn execute_syscall(
             let cmd = if args.is_empty() {
                 format!("/{}", jinx_name)
             } else {
-                let args_str: Vec<String> = args.iter().map(|(k, v)| {
-                    if v.is_empty() { k.clone() } else { format!("{}={}", k, v) }
-                }).collect();
+                let args_str: Vec<String> = args
+                    .iter()
+                    .map(|(k, v)| {
+                        if v.is_empty() {
+                            k.clone()
+                        } else {
+                            format!("{}={}", k, v)
+                        }
+                    })
+                    .collect();
                 format!("/{} {}", jinx_name, args_str.join(" "))
             };
             let output = daemon.execute(&cmd, None).await?;
@@ -84,7 +89,9 @@ pub async fn execute_syscall(
         npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
     };
 
-    let conv_id = kernel.processes.get(&pid)
+    let conv_id = kernel
+        .processes
+        .get(&pid)
         .map(|p| p.conversation_id.clone())
         .unwrap_or_default();
     let npc_name = kernel.processes.get(&pid).map(|p| p.npc.name.as_str());

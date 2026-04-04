@@ -6,7 +6,8 @@ pub fn initialize_npc_project(directory: Option<&str>) -> Result<String> {
     let npc_team = Path::new(dir).join("npc_team");
     let jinxes = npc_team.join("jinxes");
 
-    std::fs::create_dir_all(&jinxes).map_err(|e| crate::error::NpcError::Shell(format!("mkdir: {}", e)))?;
+    std::fs::create_dir_all(&jinxes)
+        .map_err(|e| crate::error::NpcError::Shell(format!("mkdir: {}", e)))?;
 
     let team_ctx = npc_team.join("team.ctx");
     if !team_ctx.exists() {

@@ -1,4 +1,3 @@
-
 pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() || chunk_size == 0 {
@@ -33,7 +32,11 @@ pub fn strip_html(html: &str) -> String {
         .to_string()
 }
 
-pub fn rag_search(query: &str, text_data: &std::collections::HashMap<String, String>, similarity_threshold: f64) -> Vec<(String, String)> {
+pub fn rag_search(
+    query: &str,
+    text_data: &std::collections::HashMap<String, String>,
+    similarity_threshold: f64,
+) -> Vec<(String, String)> {
     let ql = query.to_lowercase();
     let qw: std::collections::HashSet<&str> = ql.split_whitespace().collect();
     let mut results = Vec::new();
@@ -42,7 +45,9 @@ pub fn rag_search(query: &str, text_data: &std::collections::HashMap<String, Str
         for (idx, line) in lines.iter().enumerate() {
             let ll = line.to_lowercase();
             let lw: std::collections::HashSet<&str> = ll.split_whitespace().collect();
-            if lw.is_empty() { continue; }
+            if lw.is_empty() {
+                continue;
+            }
             let inter = qw.intersection(&lw).count();
             let score = inter as f64 / qw.len().max(1) as f64;
             if score >= similarity_threshold {
@@ -63,7 +68,9 @@ pub fn rag_search_text(query: &str, text: &str, similarity_threshold: f64) -> Ve
     for (idx, sentence) in sentences.iter().enumerate() {
         let sl = sentence.to_lowercase();
         let sw: std::collections::HashSet<&str> = sl.split_whitespace().collect();
-        if sw.is_empty() { continue; }
+        if sw.is_empty() {
+            continue;
+        }
         let inter = qw.intersection(&sw).count();
         let score = inter as f64 / qw.len().max(1) as f64;
         if score >= similarity_threshold {
@@ -75,21 +82,38 @@ pub fn rag_search_text(query: &str, text: &str, similarity_threshold: f64) -> Ve
     results
 }
 
-pub fn load_all_files(directory: &str, extensions: Option<&[&str]>, depth: usize) -> std::collections::HashMap<String, String> {
-    let default_exts = [".txt", ".md", ".py", ".java", ".c", ".cpp", ".html", ".css", ".js", ".ts", ".tsx", ".npc"];
+pub fn load_all_files(
+    directory: &str,
+    extensions: Option<&[&str]>,
+    depth: usize,
+) -> std::collections::HashMap<String, String> {
+    let default_exts = [
+        ".txt", ".md", ".py", ".java", ".c", ".cpp", ".html", ".css", ".js", ".ts", ".tsx", ".npc",
+    ];
     let exts = extensions.unwrap_or(&default_exts);
     let mut text_data = std::collections::HashMap::new();
-    if depth < 1 { return text_data; }
-    let entries = match std::fs::read_dir(directory) { Ok(e) => e, Err(_) => return text_data };
+    if depth < 1 {
+        return text_data;
+    }
+    let entries = match std::fs::read_dir(directory) {
+        Ok(e) => e,
+        Err(_) => return text_data,
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
             let ps = path.to_string_lossy().to_string();
             if exts.iter().any(|ext| ps.ends_with(ext)) {
-                if let Ok(content) = std::fs::read_to_string(&path) { text_data.insert(ps, content); }
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    text_data.insert(ps, content);
+                }
             }
         } else if path.is_dir() {
-            text_data.extend(load_all_files(&path.to_string_lossy(), extensions, depth - 1));
+            text_data.extend(load_all_files(
+                &path.to_string_lossy(),
+                extensions,
+                depth - 1,
+            ));
         }
     }
     text_data

@@ -1,6 +1,5 @@
-
 use crate::error::{NpcError, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 
 fn jobs_dir() -> String {
@@ -20,13 +19,9 @@ fn npc_bin_path() -> String {
             }
         }
     }
-    let output = std::process::Command::new("which")
-        .arg("npc")
-        .output();
+    let output = std::process::Command::new("which").arg("npc").output();
     match output {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         _ => "npc".to_string(),
     }
 }
@@ -63,7 +58,7 @@ pub fn init_jobs_table(conn: &Connection) -> Result<()> {
             next_run TEXT,
             status TEXT NOT NULL DEFAULT 'active',
             created_at TEXT NOT NULL
-        );"
+        );",
     )?;
     Ok(())
 }
@@ -88,17 +83,22 @@ pub fn unschedule_job(db_path: &str, name: &str) -> Result<()> {
 pub fn list_jobs_db(db_path: &str) -> Result<Vec<Job>> {
     let conn = Connection::open(db_path)?;
     init_jobs_table(&conn)?;
-    let mut stmt = conn.prepare("SELECT name, cron_expr, command, last_run, next_run, status FROM npc_jobs ORDER BY name")?;
-    let jobs = stmt.query_map([], |row| {
-        Ok(Job {
-            name: row.get(0)?,
-            cron_expr: row.get(1)?,
-            command: row.get(2)?,
-            last_run: row.get(3)?,
-            next_run: row.get(4)?,
-            status: row.get(5)?,
-        })
-    })?.filter_map(|r| r.ok()).collect();
+    let mut stmt = conn.prepare(
+        "SELECT name, cron_expr, command, last_run, next_run, status FROM npc_jobs ORDER BY name",
+    )?;
+    let jobs = stmt
+        .query_map([], |row| {
+            Ok(Job {
+                name: row.get(0)?,
+                cron_expr: row.get(1)?,
+                command: row.get(2)?,
+                last_run: row.get(3)?,
+                next_run: row.get(4)?,
+                status: row.get(5)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
     Ok(jobs)
 }
 
@@ -163,9 +163,7 @@ pub fn list_jobs() -> Vec<HashMap<String, serde_json::Value>> {
                 for entry in entries.flatten() {
                     let fname = entry.file_name().to_string_lossy().to_string();
                     if fname.starts_with("com.npcsh.job.") && fname.ends_with(".plist") {
-                        let name = fname
-                            .replace("com.npcsh.job.", "")
-                            .replace(".plist", "");
+                        let name = fname.replace("com.npcsh.job.", "").replace(".plist", "");
                         let label = format!("com.npcsh.job.{}", name);
                         let active = std::process::Command::new("launchctl")
                             .args(["list", &label])
@@ -181,9 +179,7 @@ pub fn list_jobs() -> Vec<HashMap<String, serde_json::Value>> {
             }
         }
         _ => {
-            let output = std::process::Command::new("crontab")
-                .arg("-l")
-                .output();
+            let output = std::process::Command::new("crontab").arg("-l").output();
             if let Ok(out) = output {
                 if out.status.success() {
                     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -209,9 +205,7 @@ pub fn job_is_active(job_name: &str) -> bool {
     match os {
         "macos" => std::path::Path::new(&plist_path(job_name)).exists(),
         _ => {
-            let output = std::process::Command::new("crontab")
-                .arg("-l")
-                .output();
+            let output = std::process::Command::new("crontab").arg("-l").output();
             match output {
                 Ok(out) if out.status.success() => {
                     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -227,8 +221,14 @@ pub fn job_is_active(job_name: &str) -> bool {
 pub fn job_status(job_name: &str) -> HashMap<String, serde_json::Value> {
     let log_path = format!("{}/{}.log", logs_dir(), job_name);
     let mut info = HashMap::new();
-    info.insert("name".into(), serde_json::Value::String(job_name.to_string()));
-    info.insert("active".into(), serde_json::Value::Bool(job_is_active(job_name)));
+    info.insert(
+        "name".into(),
+        serde_json::Value::String(job_name.to_string()),
+    );
+    info.insert(
+        "active".into(),
+        serde_json::Value::Bool(job_is_active(job_name)),
+    );
     info.insert("log".into(), serde_json::Value::String(log_path.clone()));
 
     let recent_log = if std::path::Path::new(&log_path).exists() {
@@ -253,9 +253,7 @@ pub fn _schedule_crontab(
     job_name: &str,
     log_path: &str,
 ) -> (bool, String) {
-    let output = std::process::Command::new("crontab")
-        .arg("-l")
-        .output();
+    let output = std::process::Command::new("crontab").arg("-l").output();
     let existing = match output {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
         _ => String::new(),
@@ -292,9 +290,7 @@ pub fn _schedule_crontab(
 }
 
 pub fn _unschedule_crontab(job_name: &str) -> (bool, String) {
-    let output = std::process::Command::new("crontab")
-        .arg("-l")
-        .output();
+    let output = std::process::Command::new("crontab").arg("-l").output();
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -409,7 +405,10 @@ pub async fn execute_plan_command(
     let parts: Vec<&str> = command.splitn(2, ' ').collect();
     if parts.len() < 2 {
         let mut result = HashMap::new();
-        result.insert("output".into(), "Usage: /plan <command and schedule description>".into());
+        result.insert(
+            "output".into(),
+            "Usage: /plan <command and schedule description>".into(),
+        );
         return Ok(result);
     }
 
@@ -442,14 +441,21 @@ pub async fn execute_plan_command(
     let response = crate::r#gen::get_genai_response(provider, model, &msgs, None, None).await?;
 
     let response_text = response.message.content.unwrap_or_default();
-    let clean_text = response_text.replace("```json", "").replace("```", "").trim().to_string();
+    let clean_text = response_text
+        .replace("```json", "")
+        .replace("```", "")
+        .trim()
+        .to_string();
 
-    let schedule_info: serde_json::Value = serde_json::from_str(&clean_text).map_err(|e| {
-        NpcError::Shell(format!("Failed to parse plan response as JSON: {}", e))
-    })?;
+    let schedule_info: serde_json::Value = serde_json::from_str(&clean_text)
+        .map_err(|e| NpcError::Shell(format!("Failed to parse plan response as JSON: {}", e)))?;
 
-    let job_name = format!("job_{}", schedule_info["name"].as_str().unwrap_or("unnamed"));
-    let sched_str = schedule_info["schedule"].as_str()
+    let job_name = format!(
+        "job_{}",
+        schedule_info["name"].as_str().unwrap_or("unnamed")
+    );
+    let sched_str = schedule_info["schedule"]
+        .as_str()
         .map(String::from)
         .unwrap_or_else(|| schedule_info["schedule"].to_string());
 
@@ -461,7 +467,9 @@ pub async fn execute_plan_command(
     let script_path = format!("{}/{}.sh", jdir, job_name);
     let log_path = format!("{}/{}.log", ldir, job_name);
 
-    let script_content = schedule_info["script"].as_str().unwrap_or("#!/bin/bash\necho 'no script'");
+    let script_content = schedule_info["script"]
+        .as_str()
+        .unwrap_or("#!/bin/bash\necho 'no script'");
     std::fs::write(&script_path, script_content).map_err(|e| NpcError::FileLoad {
         path: script_path.clone(),
         source: e,
@@ -478,7 +486,9 @@ pub async fn execute_plan_command(
         _schedule_crontab(&script_path, &sched_str, &job_name, &log_path)
     };
 
-    let description = schedule_info["description"].as_str().unwrap_or("(no description)");
+    let description = schedule_info["description"]
+        .as_str()
+        .unwrap_or("(no description)");
     let output = format!(
         "Job created successfully:\n- Description: {}\n- Schedule: {}\n- Script: {}\n- Log: {}",
         description, sched_str, script_path, log_path

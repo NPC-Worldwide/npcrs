@@ -1,6 +1,5 @@
-
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 pub fn get_data_dir() -> PathBuf {
     if let Ok(home) = std::env::var("INCOGNIDE_HOME") {
@@ -9,31 +8,45 @@ pub fn get_data_dir() -> PathBuf {
 
     #[cfg(target_os = "windows")]
     {
-        let base = std::env::var("LOCALAPPDATA")
-            .unwrap_or_else(|_| dirs::data_local_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| "~\\AppData\\Local".into()));
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            dirs::data_local_dir()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_else(|| "~\\AppData\\Local".into())
+        });
         let new_path = PathBuf::from(&base).join("npcsh");
         let old_path = dirs::home_dir().unwrap_or_default().join(".npcsh");
-        if old_path.exists() && !new_path.exists() { return old_path; }
+        if old_path.exists() && !new_path.exists() {
+            return old_path;
+        }
         return new_path;
     }
 
     #[cfg(target_os = "macos")]
     {
-        let new_path = dirs::home_dir().unwrap_or_default().join("Library/Application Support/npcsh");
+        let new_path = dirs::home_dir()
+            .unwrap_or_default()
+            .join("Library/Application Support/npcsh");
         let old_path = dirs::home_dir().unwrap_or_default().join(".npcsh");
-        if old_path.exists() && !new_path.exists() { return old_path; }
+        if old_path.exists() && !new_path.exists() {
+            return old_path;
+        }
         return new_path;
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let xdg_data = std::env::var("XDG_DATA_HOME")
-            .unwrap_or_else(|_| {
-                dirs::home_dir().unwrap_or_default().join(".local/share").to_string_lossy().to_string()
-            });
+        let xdg_data = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".local/share")
+                .to_string_lossy()
+                .to_string()
+        });
         let new_path = PathBuf::from(&xdg_data).join("npcsh");
         let old_path = dirs::home_dir().unwrap_or_default().join(".npcsh");
-        if old_path.exists() && !new_path.exists() { return old_path; }
+        if old_path.exists() && !new_path.exists() {
+            return old_path;
+        }
         new_path
     }
 }
@@ -41,31 +54,45 @@ pub fn get_data_dir() -> PathBuf {
 pub fn get_config_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        let base = std::env::var("APPDATA")
-            .unwrap_or_else(|_| dirs::config_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_default());
+        let base = std::env::var("APPDATA").unwrap_or_else(|_| {
+            dirs::config_dir()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
         let new_path = PathBuf::from(&base).join("npcsh");
         let old_path = dirs::home_dir().unwrap_or_default().join(".npcsh");
-        if old_path.exists() && !new_path.exists() { return old_path; }
+        if old_path.exists() && !new_path.exists() {
+            return old_path;
+        }
         return new_path;
     }
 
     #[cfg(target_os = "macos")]
     {
-        let new_path = dirs::home_dir().unwrap_or_default().join("Library/Application Support/npcsh");
+        let new_path = dirs::home_dir()
+            .unwrap_or_default()
+            .join("Library/Application Support/npcsh");
         let old_path = dirs::home_dir().unwrap_or_default().join(".npcsh");
-        if old_path.exists() && !new_path.exists() { return old_path; }
+        if old_path.exists() && !new_path.exists() {
+            return old_path;
+        }
         return new_path;
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let xdg_config = std::env::var("XDG_CONFIG_HOME")
-            .unwrap_or_else(|_| {
-                dirs::home_dir().unwrap_or_default().join(".config").to_string_lossy().to_string()
-            });
+        let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".config")
+                .to_string_lossy()
+                .to_string()
+        });
         let new_path = PathBuf::from(&xdg_config).join("npcsh");
         let old_path = dirs::home_dir().unwrap_or_default().join(".npcsh");
-        if old_path.exists() && !new_path.exists() { return old_path; }
+        if old_path.exists() && !new_path.exists() {
+            return old_path;
+        }
         new_path
     }
 }
@@ -73,51 +100,85 @@ pub fn get_config_dir() -> PathBuf {
 pub fn get_cache_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        let base = std::env::var("LOCALAPPDATA")
-            .unwrap_or_else(|_| dirs::data_local_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_default());
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            dirs::data_local_dir()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
         return PathBuf::from(&base).join("npcsh").join("cache");
     }
 
     #[cfg(target_os = "macos")]
     {
-        return dirs::home_dir().unwrap_or_default().join("Library/Caches/npcsh");
+        return dirs::home_dir()
+            .unwrap_or_default()
+            .join("Library/Caches/npcsh");
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let xdg_cache = std::env::var("XDG_CACHE_HOME")
-            .unwrap_or_else(|_| {
-                dirs::home_dir().unwrap_or_default().join(".cache").to_string_lossy().to_string()
-            });
+        let xdg_cache = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".cache")
+                .to_string_lossy()
+                .to_string()
+        });
         PathBuf::from(&xdg_cache).join("npcsh")
     }
 }
 
 pub fn get_npcshrc_path() -> PathBuf {
     let old_path = dirs::home_dir().unwrap_or_default().join(".npcshrc");
-    if old_path.exists() { return old_path; }
+    if old_path.exists() {
+        return old_path;
+    }
     get_config_dir().join("npcshrc")
 }
 
 pub fn get_history_db_path() -> PathBuf {
-    let old_path = dirs::home_dir().unwrap_or_default().join("npcsh_history.db");
-    if old_path.exists() { return old_path; }
+    let old_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join("npcsh_history.db");
+    if old_path.exists() {
+        return old_path;
+    }
     get_data_dir().join("history.db")
 }
 
-pub fn get_models_dir() -> PathBuf { get_data_dir().join("npc_team").join("models") }
-pub fn get_images_dir() -> PathBuf { get_data_dir().join("npc_team").join("images") }
-pub fn get_jobs_dir() -> PathBuf { get_data_dir().join("npc_team").join("jobs") }
-pub fn get_triggers_dir() -> PathBuf { get_data_dir().join("npc_team").join("triggers") }
-pub fn get_videos_dir() -> PathBuf { get_data_dir().join("npc_team").join("videos") }
-pub fn get_attachments_dir() -> PathBuf { get_data_dir().join("npc_team").join("attachments") }
-pub fn get_logs_dir() -> PathBuf { get_data_dir().join("npc_team").join("logs") }
+pub fn get_models_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("models")
+}
+pub fn get_images_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("images")
+}
+pub fn get_jobs_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("jobs")
+}
+pub fn get_triggers_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("triggers")
+}
+pub fn get_videos_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("videos")
+}
+pub fn get_attachments_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("attachments")
+}
+pub fn get_logs_dir() -> PathBuf {
+    get_data_dir().join("npc_team").join("logs")
+}
 
 pub fn ensure_npcsh_dirs() {
     for dir in &[
-        get_data_dir(), get_config_dir(), get_cache_dir(),
-        get_models_dir(), get_images_dir(), get_jobs_dir(),
-        get_triggers_dir(), get_videos_dir(), get_attachments_dir(),
+        get_data_dir(),
+        get_config_dir(),
+        get_cache_dir(),
+        get_models_dir(),
+        get_images_dir(),
+        get_jobs_dir(),
+        get_triggers_dir(),
+        get_videos_dir(),
+        get_attachments_dir(),
         get_logs_dir(),
     ] {
         let _ = std::fs::create_dir_all(dir);
@@ -125,7 +186,7 @@ pub fn ensure_npcsh_dirs() {
 }
 
 pub fn check_internet_connection(timeout_secs: u64) -> bool {
-    use std::net::{TcpStream, SocketAddr};
+    use std::net::{SocketAddr, TcpStream};
     let addr: SocketAddr = "8.8.8.8:53".parse().unwrap();
     TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(timeout_secs)).is_ok()
 }
@@ -137,12 +198,16 @@ pub fn load_env_from_execution_dir() {
         if let Ok(contents) = std::fs::read_to_string(&env_path) {
             for line in contents.lines() {
                 let line = line.trim();
-                if line.is_empty() || line.starts_with('#') { continue; }
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
                 let line = line.strip_prefix("export ").unwrap_or(line);
                 if let Some((key, value)) = line.split_once('=') {
                     let key = key.trim();
                     let value = value.trim().trim_matches('"').trim_matches('\'');
-                    unsafe { std::env::set_var(key, value); }
+                    unsafe {
+                        std::env::set_var(key, value);
+                    }
                 }
             }
         }
@@ -150,7 +215,9 @@ pub fn load_env_from_execution_dir() {
 }
 
 pub fn lookup_provider(model: &str) -> Option<String> {
-    if model.is_empty() { return None; }
+    if model.is_empty() {
+        return None;
+    }
 
     let expanded = shellexpand::tilde(model).to_string();
     if Path::new(&expanded).is_dir() {
@@ -175,7 +242,18 @@ pub fn lookup_provider(model: &str) -> Option<String> {
         return Some("airllm".into());
     }
 
-    let ollama_prefixes = ["llama", "deepseek", "qwen", "llava", "phi", "mistral", "mixtral", "dolphin", "codellama", "gemma"];
+    let ollama_prefixes = [
+        "llama",
+        "deepseek",
+        "qwen",
+        "llava",
+        "phi",
+        "mistral",
+        "mixtral",
+        "dolphin",
+        "codellama",
+        "gemma",
+    ];
     if ollama_prefixes.iter().any(|p| model.starts_with(p)) {
         return Some("ollama".into());
     }
@@ -185,9 +263,15 @@ pub fn lookup_provider(model: &str) -> Option<String> {
         return Some("openai".into());
     }
 
-    if model.starts_with("claude") { return Some("anthropic".into()); }
-    if model.starts_with("gemini") || model.starts_with("veo") { return Some("gemini".into()); }
-    if model.contains("diffusion") { return Some("diffusers".into()); }
+    if model.starts_with("claude") {
+        return Some("anthropic".into());
+    }
+    if model.starts_with("gemini") || model.starts_with("veo") {
+        return Some("gemini".into());
+    }
+    if model.contains("diffusion") {
+        return Some("diffusers".into());
+    }
 
     None
 }
@@ -195,12 +279,16 @@ pub fn lookup_provider(model: &str) -> Option<String> {
 pub fn load_custom_providers() -> HashMap<String, serde_json::Value> {
     let mut providers = HashMap::new();
     let rc_path = get_npcshrc_path();
-    if !rc_path.exists() { return providers; }
+    if !rc_path.exists() {
+        return providers;
+    }
 
     if let Ok(contents) = std::fs::read_to_string(&rc_path) {
         for line in contents.lines() {
             let line = line.split('#').next().unwrap_or("").trim();
-            if !line.contains("CUSTOM_PROVIDER_") || !line.contains('=') { continue; }
+            if !line.contains("CUSTOM_PROVIDER_") || !line.contains('=') {
+                continue;
+            }
             let line = line.strip_prefix("export ").unwrap_or(line);
             if let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
@@ -215,16 +303,25 @@ pub fn load_custom_providers() -> HashMap<String, serde_json::Value> {
     providers
 }
 
-use crate::npc_compiler::{NPC, Jinx};
+use crate::npc_compiler::{Jinx, NPC};
 
-pub fn get_system_message(npc: Option<&NPC>, tool_capable: bool, team_context: Option<&str>, team_members: Option<&[(String, String)]>, jinxes: &HashMap<String, Jinx>) -> String {
+pub fn get_system_message(
+    npc: Option<&NPC>,
+    tool_capable: bool,
+    team_context: Option<&str>,
+    team_members: Option<&[(String, String)]>,
+    jinxes: &HashMap<String, Jinx>,
+) -> String {
     let npc = match npc {
         Some(n) => n,
         None => return "You are a helpful assistant".into(),
     };
 
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
     let mut msg = format!(
         ".\n..\n...\n....\n.....\n......\n.......\n........\n.........\n..........\n\
@@ -316,7 +413,9 @@ pub fn log_action(action: &str, detail: &str) {
     let entry = format!("[{}] {}: {}\n", now, action, detail);
     let log_file = logs_dir.join("npcsh.log");
     let _ = std::fs::OpenOptions::new()
-        .create(true).append(true).open(&log_file)
+        .create(true)
+        .append(true)
+        .open(&log_file)
         .and_then(|mut f| std::io::Write::write_all(&mut f, entry.as_bytes()));
 }
 
@@ -339,7 +438,10 @@ pub fn get_directory_npcs(directory: Option<&str>) -> Vec<String> {
 }
 
 pub fn guess_mime_type(filename: &str) -> &'static str {
-    let ext = Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     match ext.to_lowercase().as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
@@ -390,12 +492,17 @@ fn git(args: &[&str], cwd: &Path) -> std::result::Result<String, String> {
         .map_err(|e| format!("git failed: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(stderr.is_empty().then(|| format!("git {} failed", args[0])).unwrap_or(stderr));
+        return Err(stderr
+            .is_empty()
+            .then(|| format!("git {} failed", args[0]))
+            .unwrap_or(stderr));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn team_sync_status(team_path: Option<&str>) -> std::result::Result<HashMap<String, serde_json::Value>, String> {
+pub fn team_sync_status(
+    team_path: Option<&str>,
+) -> std::result::Result<HashMap<String, serde_json::Value>, String> {
     let team_dir = resolve_team_dir(team_path);
     if !team_dir.join(".git").exists() {
         return Ok({
@@ -414,7 +521,15 @@ pub fn team_sync_status(team_path: Option<&str>) -> std::result::Result<HashMap<
     let mut ahead = 0u64;
     if has_remote {
         let _ = git(&["fetch", "--quiet"], &team_dir);
-        if let Ok(counts) = git(&["rev-list", "--left-right", "--count", &format!("HEAD...origin/{}", branch)], &team_dir) {
+        if let Ok(counts) = git(
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("HEAD...origin/{}", branch),
+            ],
+            &team_dir,
+        ) {
             let parts: Vec<&str> = counts.split_whitespace().collect();
             if parts.len() == 2 {
                 ahead = parts[0].parse().unwrap_or(0);
@@ -423,7 +538,8 @@ pub fn team_sync_status(team_path: Option<&str>) -> std::result::Result<HashMap<
         }
     }
 
-    let modified: Vec<&str> = status.lines()
+    let modified: Vec<&str> = status
+        .lines()
         .filter(|l| l.starts_with(" M") || l.starts_with("M "))
         .map(|l| l[3..].trim())
         .collect();
@@ -463,7 +579,10 @@ pub fn team_sync_pull(team_path: Option<&str>) -> std::result::Result<String, St
     git(&["pull", "origin", &branch], &team_dir)
 }
 
-pub fn team_sync_commit(team_path: Option<&str>, message: &str) -> std::result::Result<String, String> {
+pub fn team_sync_commit(
+    team_path: Option<&str>,
+    message: &str,
+) -> std::result::Result<String, String> {
     let team_dir = resolve_team_dir(team_path);
     git(&["add", "."], &team_dir)?;
     git(&["commit", "-m", message], &team_dir)?;
@@ -475,7 +594,10 @@ pub fn team_sync_commit(team_path: Option<&str>, message: &str) -> std::result::
     Ok("Changes committed".into())
 }
 
-pub fn team_sync_diff(team_path: Option<&str>, file_path: Option<&str>) -> std::result::Result<String, String> {
+pub fn team_sync_diff(
+    team_path: Option<&str>,
+    file_path: Option<&str>,
+) -> std::result::Result<String, String> {
     let team_dir = resolve_team_dir(team_path);
     let mut args = vec!["diff"];
     if let Some(fp) = file_path {
@@ -490,8 +612,8 @@ pub fn init_db_tables(db_path: Option<&str>) -> std::result::Result<(), String> 
         .map(|p| shellexpand::tilde(p).to_string())
         .unwrap_or_else(|| get_history_db_path().to_string_lossy().to_string());
 
-    let conn = rusqlite::Connection::open(&path)
-        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    let conn =
+        rusqlite::Connection::open(&path).map_err(|e| format!("Failed to open DB: {}", e))?;
 
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS conversation_history (
@@ -564,8 +686,9 @@ pub fn init_db_tables(db_path: Option<&str>) -> std::result::Result<(), String> 
             content TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(npc_name, version)
-        );"
-    ).map_err(|e| format!("Failed to create tables: {}", e))?;
+        );",
+    )
+    .map_err(|e| format!("Failed to create tables: {}", e))?;
 
     Ok(())
 }

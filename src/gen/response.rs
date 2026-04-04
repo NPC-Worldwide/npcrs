@@ -1,13 +1,12 @@
-
 use crate::error::{NpcError, Result};
 use crate::r#gen::response_types::*;
 
+use genai::Client as GenaiClient;
 use genai::chat::{
     ChatMessage, ChatRequest, ChatResponse as GenaiChatResponse, ContentPart,
     MessageContent as GenaiContent, Tool as GenaiTool, ToolCall as GenaiToolCall,
     ToolResponse as GenaiToolResponse,
 };
-use genai::Client as GenaiClient;
 
 use std::sync::OnceLock;
 

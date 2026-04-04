@@ -1,4 +1,3 @@
-
 use crate::error::Result;
 use crate::r#gen::Message;
 use std::collections::HashMap;
@@ -15,7 +14,6 @@ pub struct InferResult {
 }
 
 pub async fn infer_matrix(
-    
     prompt: &str,
     models: &[(String, String)],
     system_prompt: Option<&str>,
@@ -31,8 +29,7 @@ pub async fn infer_matrix(
         }
         messages.push(Message::user(prompt));
 
-        let result = crate::r#gen::get_genai_response(provider, model, &messages, None, None)
-            .await;
+        let result = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await;
 
         let elapsed = start.elapsed().as_millis() as u64;
 

@@ -1,4 +1,3 @@
-
 use crate::error::Result;
 use crate::r#gen::Message;
 use crate::npc_compiler::NPC;
@@ -15,12 +14,7 @@ pub struct DebateResult {
     pub summary: String,
 }
 
-pub async fn debate(
-    
-    npcs: &[&NPC],
-    topic: &str,
-    rounds: usize,
-) -> Result<DebateResult> {
+pub async fn debate(npcs: &[&NPC], topic: &str, rounds: usize) -> Result<DebateResult> {
     if npcs.is_empty() {
         return Ok(DebateResult {
             rounds: Vec::new(),
@@ -61,19 +55,16 @@ pub async fn debate(
             let provider = npc.resolved_provider();
 
             let system_prompt = npc.system_prompt(None);
-            let messages = vec![
-                Message::system(&system_prompt),
-                Message::user(&prompt),
-            ];
+            let messages = vec![Message::system(&system_prompt), Message::user(&prompt)];
 
             let response = crate::r#gen::get_genai_response(
-                    &provider,
-                    &model,
-                    &messages,
-                    None,
-                    npc.api_url.as_deref(),
-                )
-                .await?;
+                &provider,
+                &model,
+                &messages,
+                None,
+                npc.api_url.as_deref(),
+            )
+            .await?;
 
             let argument = response.message.content.unwrap_or_default();
 
@@ -100,7 +91,6 @@ pub async fn debate(
 }
 
 async fn generate_summary(
-    
     summarizer: &NPC,
     topic: &str,
     conversation_history: &str,
@@ -118,18 +108,20 @@ async fn generate_summary(
     );
 
     let messages = vec![
-        Message::system("You are an impartial debate summarizer. Provide a balanced, concise summary."),
+        Message::system(
+            "You are an impartial debate summarizer. Provide a balanced, concise summary.",
+        ),
         Message::user(&prompt),
     ];
 
     let response = crate::r#gen::get_genai_response(
-            &provider,
-            &model,
-            &messages,
-            None,
-            summarizer.api_url.as_deref(),
-        )
-        .await?;
+        &provider,
+        &model,
+        &messages,
+        None,
+        summarizer.api_url.as_deref(),
+    )
+    .await?;
 
     Ok(response.message.content.unwrap_or_default())
 }

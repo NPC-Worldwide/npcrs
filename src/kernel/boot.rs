@@ -1,12 +1,11 @@
-
 use crate::drivers::DriverManager;
 use crate::error::Result;
 use crate::ipc::IpcBus;
 use crate::kernel::Kernel;
 use crate::memory::CommandHistory;
+use crate::npc_compiler;
 use crate::process::Capabilities;
 use crate::scheduler::Scheduler;
-use crate::npc_compiler;
 use crate::vfs::Vfs;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
@@ -46,11 +45,9 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
 
     let team_box = Box::new(kernel.team.clone());
 
-    let mut init_npc = kernel
-        .team
-        .lead_npc()
-        .cloned()
-        .unwrap_or_else(|| crate::npc_compiler::NPC::new("init", "You are the init process. Coordinate the system."));
+    let mut init_npc = kernel.team.lead_npc().cloned().unwrap_or_else(|| {
+        crate::npc_compiler::NPC::new("init", "You are the init process. Coordinate the system.")
+    });
     init_npc.team = Some(team_box.clone());
 
     kernel.spawn_init(init_npc);

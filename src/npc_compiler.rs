@@ -1,5 +1,5 @@
 use crate::error::{NpcError, Result};
-use crate::r#gen::{Message, ToolDef, LlmResponse};
+use crate::r#gen::{LlmResponse, Message, ToolDef};
 use crate::tools::{RegisteredTool, ToolBuilder, ToolRegistry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -8,7 +8,6 @@ use std::path::Path;
 use tera::{Context, Tera};
 use tokio::process::Command;
 use walkdir::WalkDir;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NPC {
@@ -210,7 +209,11 @@ impl<'de> Deserialize<'de> for McpServerSpec {
                 command: None,
                 tools: Vec::new(),
             }),
-            McpSpec::Full { path, command, tools } => Ok(McpServerSpec {
+            McpSpec::Full {
+                path,
+                command,
+                tools,
+            } => Ok(McpServerSpec {
                 path,
                 command,
                 tools,
@@ -263,27 +266,24 @@ impl NPC {
         parts.join("\n\n")
     }
 
-    pub fn resolve_tools(&self, jinxes: &HashMap<String, Jinx>) -> (Vec<ToolDef>, HashMap<String, ToolExecutor>) {
+    pub fn resolve_tools(
+        &self,
+        jinxes: &HashMap<String, Jinx>,
+    ) -> (Vec<ToolDef>, HashMap<String, ToolExecutor>) {
         let mut defs = Vec::new();
         let mut executors = HashMap::new();
 
         for jinx_name in &self.jinx_names {
             if let Some(jinx) = jinxes.get(jinx_name) {
                 if let Some(tool_def) = jinx.to_tool_def() {
-                    executors.insert(
-                        jinx.name.clone(),
-                        ToolExecutor::Jinx(jinx.name.clone()),
-                    );
+                    executors.insert(jinx.name.clone(), ToolExecutor::Jinx(jinx.name.clone()));
                     defs.push(tool_def);
                 }
             }
         }
 
         for mcp in &self.mcp_servers {
-            executors.insert(
-                format!("mcp:{}", mcp.path),
-                ToolExecutor::Mcp(mcp.clone()),
-            );
+            executors.insert(format!("mcp:{}", mcp.path), ToolExecutor::Mcp(mcp.clone()));
         }
 
         (defs, executors)
@@ -297,7 +297,14 @@ impl NPC {
         let model = self.resolved_model();
         let provider = self.resolved_provider();
 
-        crate::r#gen::get_genai_response(&provider, &model, messages, tools, self.api_url.as_deref()).await
+        crate::r#gen::get_genai_response(
+            &provider,
+            &model,
+            messages,
+            tools,
+            self.api_url.as_deref(),
+        )
+        .await
     }
 
     pub fn resolved_model(&self) -> String {
@@ -323,10 +330,18 @@ impl NPC {
         stream: bool,
     ) -> Result<crate::llm_funcs::LlmResponseResult> {
         crate::llm_funcs::get_llm_response_ext(
-            prompt, Some(self), None, None, None,
-            messages.unwrap_or(&[]), None,
-            format, context, stream,
-        ).await
+            prompt,
+            Some(self),
+            None,
+            None,
+            None,
+            messages.unwrap_or(&[]),
+            None,
+            format,
+            context,
+            stream,
+        )
+        .await
     }
 
     pub async fn check_llm_command(
@@ -345,7 +360,8 @@ impl NPC {
             context,
             jinxes,
             5,
-        ).await
+        )
+        .await
     }
 
     pub async fn execute_jinx(
@@ -357,11 +373,18 @@ impl NPC {
         context: Option<&str>,
     ) -> Result<HashMap<String, serde_json::Value>> {
         crate::llm_funcs::handle_jinx_call(
-            command, jinx_name, jinxes,
+            command,
+            jinx_name,
+            jinxes,
             Some(&self.resolved_model()).map(|s| s.as_str()),
             Some(&self.resolved_provider()).map(|s| s.as_str()),
-            Some(self), messages, context, 3, 0,
-        ).await
+            Some(self),
+            messages,
+            context,
+            3,
+            0,
+        )
+        .await
     }
 
     pub fn to_dict(&self) -> serde_json::Value {
@@ -379,13 +402,19 @@ impl NPC {
     pub fn save(&self, directory: Option<&str>) -> Result<()> {
         let dir = directory
             .map(|d| std::path::PathBuf::from(d))
-            .or_else(|| self.source_path.as_ref().and_then(|p| Path::new(p).parent().map(|p| p.to_path_buf())))
+            .or_else(|| {
+                self.source_path
+                    .as_ref()
+                    .and_then(|p| Path::new(p).parent().map(|p| p.to_path_buf()))
+            })
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("npc_team"));
         let _ = std::fs::create_dir_all(&dir);
         let filename = format!("{}.npc", self.name);
         let path = dir.join(&filename);
-        let yaml = serde_yaml::to_string(self).map_err(|e| crate::error::NpcError::Shell(format!("YAML serialize: {}", e)))?;
-        std::fs::write(&path, yaml).map_err(|e| crate::error::NpcError::Shell(format!("Write NPC: {}", e)))?;
+        let yaml = serde_yaml::to_string(self)
+            .map_err(|e| crate::error::NpcError::Shell(format!("YAML serialize: {}", e)))?;
+        std::fs::write(&path, yaml)
+            .map_err(|e| crate::error::NpcError::Shell(format!("Write NPC: {}", e)))?;
         Ok(())
     }
 
@@ -396,14 +425,14 @@ impl NPC {
         let mut stmt = conn.prepare(
             "SELECT content, role, timestamp FROM conversation_history WHERE npc = ?1 AND content LIKE ?2 ORDER BY timestamp DESC LIMIT ?3"
         )?;
-        let results: Vec<String> = stmt.query_map(
-            rusqlite::params![self.name, pattern, limit as i64],
-            |row| {
+        let results: Vec<String> = stmt
+            .query_map(rusqlite::params![self.name, pattern, limit as i64], |row| {
                 let content: String = row.get(0)?;
                 let role: String = row.get(1)?;
                 Ok(format!("[{}] {}", role, content))
-            }
-        )?.filter_map(|r| r.ok()).collect();
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(results.join("\n"))
     }
 
@@ -414,10 +443,12 @@ impl NPC {
         let mut stmt = conn.prepare(
             "SELECT content FROM memory_lifecycle WHERE npc = ?1 AND content LIKE ?2 AND status IN ('approved', 'human-approved') ORDER BY created_at DESC LIMIT ?3"
         )?;
-        let results: Vec<String> = stmt.query_map(
-            rusqlite::params![self.name, pattern, limit as i64],
-            |row| row.get::<_, String>(0)
-        )?.filter_map(|r| r.ok()).collect();
+        let results: Vec<String> = stmt
+            .query_map(rusqlite::params![self.name, pattern, limit as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(results.join("\n"))
     }
 
@@ -426,7 +457,9 @@ impl NPC {
             "Think through this problem step by step:\n\n{}\n\nProvide a clear, numbered breakdown of your reasoning.",
             problem
         );
-        let result = self.get_llm_response(&prompt, None, None, None, false).await?;
+        let result = self
+            .get_llm_response(&prompt, None, None, None, false)
+            .await?;
         Ok(result.response.unwrap_or_default())
     }
 
@@ -435,7 +468,9 @@ impl NPC {
             "Write {} code for the following task:\n\n{}\n\nRespond with only the code, no markdown formatting.",
             language, task
         );
-        let result = self.get_llm_response(&prompt, None, None, None, false).await?;
+        let result = self
+            .get_llm_response(&prompt, None, None, None, false)
+            .await?;
         Ok(result.response.unwrap_or_default())
     }
 
@@ -450,7 +485,10 @@ impl NPC {
         Ok(Some(conn.last_insert_rowid()))
     }
 
-    pub fn read_memory(&self, memory_id: i64) -> Result<Option<HashMap<String, serde_json::Value>>> {
+    pub fn read_memory(
+        &self,
+        memory_id: i64,
+    ) -> Result<Option<HashMap<String, serde_json::Value>>> {
         let db_path = crate::npc_sysenv::get_history_db_path();
         let conn = rusqlite::Connection::open(&db_path)?;
         let result = conn.query_row(
@@ -483,32 +521,50 @@ impl NPC {
         Ok(rows > 0)
     }
 
-    pub fn search_memories(&self, query: &str, limit: usize, status_filter: Option<&str>) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+    pub fn search_memories(
+        &self,
+        query: &str,
+        limit: usize,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<HashMap<String, serde_json::Value>>> {
         let db_path = crate::npc_sysenv::get_history_db_path();
         let conn = rusqlite::Connection::open(&db_path)?;
         let pattern = format!("%{}%", query);
         let sql = if let Some(status) = status_filter {
-            format!("SELECT id, memory_text, memory_type, status, created_at FROM memory_lifecycle WHERE npc = ?1 AND memory_text LIKE ?2 AND status = '{}' ORDER BY created_at DESC LIMIT ?3", status)
+            format!(
+                "SELECT id, memory_text, memory_type, status, created_at FROM memory_lifecycle WHERE npc = ?1 AND memory_text LIKE ?2 AND status = '{}' ORDER BY created_at DESC LIMIT ?3",
+                status
+            )
         } else {
             "SELECT id, memory_text, memory_type, status, created_at FROM memory_lifecycle WHERE npc = ?1 AND memory_text LIKE ?2 ORDER BY created_at DESC LIMIT ?3".to_string()
         };
         let mut stmt = conn.prepare(&sql)?;
-        let results = stmt.query_map(
-            rusqlite::params![self.name, pattern, limit as i64],
-            |row| {
+        let results = stmt
+            .query_map(rusqlite::params![self.name, pattern, limit as i64], |row| {
                 let mut m = HashMap::new();
                 m.insert("id".into(), serde_json::json!(row.get::<_, i64>(0)?));
-                m.insert("content".into(), serde_json::json!(row.get::<_, String>(1)?));
+                m.insert(
+                    "content".into(),
+                    serde_json::json!(row.get::<_, String>(1)?),
+                );
                 m.insert("type".into(), serde_json::json!(row.get::<_, String>(2)?));
                 m.insert("status".into(), serde_json::json!(row.get::<_, String>(3)?));
-                m.insert("created_at".into(), serde_json::json!(row.get::<_, String>(4)?));
+                m.insert(
+                    "created_at".into(),
+                    serde_json::json!(row.get::<_, String>(4)?),
+                );
                 Ok(m)
-            }
-        )?.filter_map(|r| r.ok()).collect();
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(results)
     }
 
-    pub fn get_all_memories(&self, limit: usize, status_filter: Option<&str>) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+    pub fn get_all_memories(
+        &self,
+        limit: usize,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<HashMap<String, serde_json::Value>>> {
         self.search_memories("", limit, status_filter)
     }
 
@@ -516,14 +572,20 @@ impl NPC {
         let db_path = crate::npc_sysenv::get_history_db_path();
         let conn = rusqlite::Connection::open(&db_path)?;
         let mut stats = HashMap::new();
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memory_lifecycle WHERE npc = ?1",
-            rusqlite::params![self.name], |row| row.get(0)
-        ).unwrap_or(0);
-        let pending: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memory_lifecycle WHERE npc = ?1 AND status = 'pending'",
-            rusqlite::params![self.name], |row| row.get(0)
-        ).unwrap_or(0);
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_lifecycle WHERE npc = ?1",
+                rusqlite::params![self.name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_lifecycle WHERE npc = ?1 AND status = 'pending'",
+                rusqlite::params![self.name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         let approved: i64 = conn.query_row(
             "SELECT COUNT(*) FROM memory_lifecycle WHERE npc = ?1 AND status IN ('approved', 'human-approved')",
             rusqlite::params![self.name], |row| row.get(0)
@@ -540,25 +602,40 @@ impl NPC {
         let mut stmt = conn.prepare(
             "SELECT memory_text FROM memory_lifecycle WHERE npc = ?1 AND status IN ('approved', 'human-approved') ORDER BY created_at DESC LIMIT 20"
         ).ok()?;
-        let memories: Vec<String> = stmt.query_map(
-            rusqlite::params![self.name],
-            |row| row.get::<_, String>(0)
-        ).ok()?.filter_map(|r| r.ok()).collect();
-        if memories.is_empty() { return None; }
-        Some(memories.iter().map(|m| format!("- {}", m)).collect::<Vec<_>>().join("\n"))
+        let memories: Vec<String> = stmt
+            .query_map(rusqlite::params![self.name], |row| row.get::<_, String>(0))
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
+        if memories.is_empty() {
+            return None;
+        }
+        Some(
+            memories
+                .iter()
+                .map(|m| format!("- {}", m))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     }
 
     pub async fn query_database(&self, sql_query: &str) -> Result<String> {
         let db_path = self.db_conn.as_deref().unwrap_or("");
-        if db_path.is_empty() { return Err(NpcError::Shell("No database connection configured".into())); }
+        if db_path.is_empty() {
+            return Err(NpcError::Shell("No database connection configured".into()));
+        }
         let conn = rusqlite::Connection::open(db_path)?;
         let mut stmt = conn.prepare(sql_query)?;
         let col_count = stmt.column_count();
-        let col_names: Vec<String> = (0..col_count).map(|i| stmt.column_name(i).unwrap_or("?").to_string()).collect();
+        let col_names: Vec<String> = (0..col_count)
+            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
+            .collect();
         let mut rows_out = Vec::new();
         let mut rows = stmt.query(rusqlite::params![])?;
         while let Some(row) = rows.next()? {
-            let vals: Vec<String> = (0..col_count).map(|i| row.get::<_, String>(i).unwrap_or_default()).collect();
+            let vals: Vec<String> = (0..col_count)
+                .map(|i| row.get::<_, String>(i).unwrap_or_default())
+                .collect();
             rows_out.push(vals.join("\t"));
         }
         Ok(format!("{}\n{}", col_names.join("\t"), rows_out.join("\n")))
@@ -575,14 +652,25 @@ impl NPC {
         Ok(count as i64)
     }
 
-    pub fn update_memory_by_id(&self, memory_id: i64, new_content: Option<&str>, status: Option<&str>) -> Result<bool> {
+    pub fn update_memory_by_id(
+        &self,
+        memory_id: i64,
+        new_content: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<bool> {
         let db_path = crate::npc_sysenv::get_history_db_path();
         let conn = rusqlite::Connection::open(&db_path)?;
         if let Some(content) = new_content {
-            conn.execute("UPDATE memory_lifecycle SET final_memory = ?1 WHERE id = ?2 AND npc = ?3", rusqlite::params![content, memory_id, self.name])?;
+            conn.execute(
+                "UPDATE memory_lifecycle SET final_memory = ?1 WHERE id = ?2 AND npc = ?3",
+                rusqlite::params![content, memory_id, self.name],
+            )?;
         }
         if let Some(s) = status {
-            conn.execute("UPDATE memory_lifecycle SET status = ?1 WHERE id = ?2 AND npc = ?3", rusqlite::params![s, memory_id, self.name])?;
+            conn.execute(
+                "UPDATE memory_lifecycle SET status = ?1 WHERE id = ?2 AND npc = ?3",
+                rusqlite::params![s, memory_id, self.name],
+            )?;
         }
         Ok(true)
     }
@@ -596,7 +684,12 @@ impl NPC {
         state
     }
 
-    pub async fn generate_todos(&self, user_goal: &str, planning_state: &HashMap<String, serde_json::Value>, additional_context: &str) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+    pub async fn generate_todos(
+        &self,
+        user_goal: &str,
+        planning_state: &HashMap<String, serde_json::Value>,
+        additional_context: &str,
+    ) -> Result<Vec<HashMap<String, serde_json::Value>>> {
         let prompt = format!(
             "You are a high-level project planner. Structure tasks logically:\n\
             1. Understand current state\n\
@@ -615,20 +708,58 @@ impl NPC {
             }}",
             user_goal, additional_context
         );
-        let result = crate::llm_funcs::get_llm_response_ext(&prompt, Some(self), None, None, None, &[], None, Some("json"), None, false).await?;
-        Ok(result.response_json.and_then(|j| j.get("todos").and_then(|t| t.as_array()).map(|a| {
-            a.iter().map(|v| {
-                let mut m = HashMap::new();
-                m.insert("description".into(), v.get("description").cloned().unwrap_or(serde_json::json!("")));
-                m.insert("estimated_complexity".into(), v.get("estimated_complexity").cloned().unwrap_or(serde_json::json!("medium")));
-                m
-            }).collect()
-        })).unwrap_or_default())
+        let result = crate::llm_funcs::get_llm_response_ext(
+            &prompt,
+            Some(self),
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some("json"),
+            None,
+            false,
+        )
+        .await?;
+        Ok(result
+            .response_json
+            .and_then(|j| {
+                j.get("todos").and_then(|t| t.as_array()).map(|a| {
+                    a.iter()
+                        .map(|v| {
+                            let mut m = HashMap::new();
+                            m.insert(
+                                "description".into(),
+                                v.get("description")
+                                    .cloned()
+                                    .unwrap_or(serde_json::json!("")),
+                            );
+                            m.insert(
+                                "estimated_complexity".into(),
+                                v.get("estimated_complexity")
+                                    .cloned()
+                                    .unwrap_or(serde_json::json!("medium")),
+                            );
+                            m
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default())
     }
 
-    pub async fn should_break_down_todo(&self, todo: &HashMap<String, serde_json::Value>) -> Result<bool> {
-        let description = todo.get("description").and_then(|t| t.as_str()).unwrap_or("");
-        let complexity = todo.get("estimated_complexity").and_then(|t| t.as_str()).unwrap_or("unknown");
+    pub async fn should_break_down_todo(
+        &self,
+        todo: &HashMap<String, serde_json::Value>,
+    ) -> Result<bool> {
+        let description = todo
+            .get("description")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let complexity = todo
+            .get("estimated_complexity")
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown");
         let prompt = format!(
             "Todo: {}\n\
             Complexity: {}\n\n\
@@ -639,12 +770,33 @@ impl NPC {
             Return JSON: {{\"should_break_down\": true/false, \"reason\": \"explanation\"}}",
             description, complexity
         );
-        let result = crate::llm_funcs::get_llm_response_ext(&prompt, Some(self), None, None, None, &[], None, Some("json"), None, false).await?;
-        Ok(result.response_json.and_then(|j| j.get("should_break_down").and_then(|v| v.as_bool())).unwrap_or(false))
+        let result = crate::llm_funcs::get_llm_response_ext(
+            &prompt,
+            Some(self),
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some("json"),
+            None,
+            false,
+        )
+        .await?;
+        Ok(result
+            .response_json
+            .and_then(|j| j.get("should_break_down").and_then(|v| v.as_bool()))
+            .unwrap_or(false))
     }
 
-    pub async fn generate_subtodos(&self, todo: &HashMap<String, serde_json::Value>) -> Result<Vec<HashMap<String, serde_json::Value>>> {
-        let description = todo.get("description").and_then(|t| t.as_str()).unwrap_or("");
+    pub async fn generate_subtodos(
+        &self,
+        todo: &HashMap<String, serde_json::Value>,
+    ) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+        let description = todo
+            .get("description")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
         let prompt = format!(
             "Parent todo: {}\n\n\
             Break this into atomic, executable subtodos. Each should be:\n\
@@ -660,22 +812,65 @@ impl NPC {
             }}",
             description
         );
-        let result = crate::llm_funcs::get_llm_response_ext(&prompt, Some(self), None, None, None, &[], None, Some("json"), None, false).await?;
-        Ok(result.response_json.and_then(|j| j.get("subtodos").and_then(|t| t.as_array()).map(|a| {
-            a.iter().map(|v| {
-                let mut m = HashMap::new();
-                m.insert("description".into(), v.get("description").cloned().unwrap_or(serde_json::json!("")));
-                m.insert("type".into(), v.get("type").cloned().unwrap_or(serde_json::json!("action")));
-                m
-            }).collect()
-        })).unwrap_or_default())
+        let result = crate::llm_funcs::get_llm_response_ext(
+            &prompt,
+            Some(self),
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some("json"),
+            None,
+            false,
+        )
+        .await?;
+        Ok(result
+            .response_json
+            .and_then(|j| {
+                j.get("subtodos").and_then(|t| t.as_array()).map(|a| {
+                    a.iter()
+                        .map(|v| {
+                            let mut m = HashMap::new();
+                            m.insert(
+                                "description".into(),
+                                v.get("description")
+                                    .cloned()
+                                    .unwrap_or(serde_json::json!("")),
+                            );
+                            m.insert(
+                                "type".into(),
+                                v.get("type")
+                                    .cloned()
+                                    .unwrap_or(serde_json::json!("action")),
+                            );
+                            m
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default())
     }
 
-    pub async fn execute_planning_item(&self, item: &HashMap<String, serde_json::Value>, planning_state: &HashMap<String, serde_json::Value>, context: &str) -> Result<HashMap<String, serde_json::Value>> {
+    pub async fn execute_planning_item(
+        &self,
+        item: &HashMap<String, serde_json::Value>,
+        planning_state: &HashMap<String, serde_json::Value>,
+        context: &str,
+    ) -> Result<HashMap<String, serde_json::Value>> {
         let context_summary = self.get_planning_context_summary(planning_state);
-        let description = item.get("description").and_then(|t| t.as_str()).unwrap_or("");
-        let constraints: Vec<String> = planning_state.get("constraints").and_then(|c| c.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| format!("- {}", s))).collect())
+        let description = item
+            .get("description")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let constraints: Vec<String> = planning_state
+            .get("constraints")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| format!("- {}", s)))
+                    .collect()
+            })
             .unwrap_or_default();
         let command = format!(
             "Current context:\n\
@@ -684,7 +879,10 @@ impl NPC {
             Execute this task: {}\n\n\
             Constraints to follow:\n\
             {}",
-            context_summary, context, description, constraints.join("\n")
+            context_summary,
+            context,
+            description,
+            constraints.join("\n")
         );
         let mut messages = Vec::new();
         let jinxes = self.jinxes_dict.clone();
@@ -692,24 +890,48 @@ impl NPC {
             &command,
             Some(self.resolved_model().as_str()),
             Some(self.resolved_provider().as_str()),
-            Some(self), &mut messages, None, &jinxes, 5,
-        ).await?;
+            Some(self),
+            &mut messages,
+            None,
+            &jinxes,
+            5,
+        )
+        .await?;
         Ok(result)
     }
 
-    pub fn get_planning_context_summary(&self, planning_state: &HashMap<String, serde_json::Value>) -> String {
+    pub fn get_planning_context_summary(
+        &self,
+        planning_state: &HashMap<String, serde_json::Value>,
+    ) -> String {
         let mut context = Vec::new();
         if let Some(facts) = planning_state.get("facts").and_then(|f| f.as_array()) {
             let strs: Vec<&str> = facts.iter().filter_map(|v| v.as_str()).take(5).collect();
-            if !strs.is_empty() { context.push(format!("Facts: {}", strs.join("; "))); }
+            if !strs.is_empty() {
+                context.push(format!("Facts: {}", strs.join("; ")));
+            }
         }
         if let Some(mistakes) = planning_state.get("mistakes").and_then(|m| m.as_array()) {
-            let strs: Vec<&str> = mistakes.iter().filter_map(|v| v.as_str()).rev().take(3).collect();
-            if !strs.is_empty() { context.push(format!("Recent mistakes: {}", strs.join("; "))); }
+            let strs: Vec<&str> = mistakes
+                .iter()
+                .filter_map(|v| v.as_str())
+                .rev()
+                .take(3)
+                .collect();
+            if !strs.is_empty() {
+                context.push(format!("Recent mistakes: {}", strs.join("; ")));
+            }
         }
         if let Some(successes) = planning_state.get("successes").and_then(|s| s.as_array()) {
-            let strs: Vec<&str> = successes.iter().filter_map(|v| v.as_str()).rev().take(3).collect();
-            if !strs.is_empty() { context.push(format!("Recent successes: {}", strs.join("; "))); }
+            let strs: Vec<&str> = successes
+                .iter()
+                .filter_map(|v| v.as_str())
+                .rev()
+                .take(3)
+                .collect();
+            if !strs.is_empty() {
+                context.push(format!("Recent successes: {}", strs.join("; ")));
+            }
         }
         context.join("\n")
     }
@@ -736,20 +958,19 @@ pub fn load_npc_from_file(path: impl AsRef<Path>) -> Result<NPC> {
 
     let processed = preprocess_npc_yaml(&raw);
 
-    let mut npc: NPC =
-        serde_yaml::from_str(&processed).map_err(|e| NpcError::YamlParse {
-            path: path.display().to_string(),
-            source: e,
-        })?;
+    let mut npc: NPC = serde_yaml::from_str(&processed).map_err(|e| NpcError::YamlParse {
+        path: path.display().to_string(),
+        source: e,
+    })?;
 
     npc.source_path = Some(path.display().to_string());
     npc.npc_path = Some(path.display().to_string());
 
     let file_parent = path.parent().map(|p| p.to_string_lossy().to_string());
     npc.npc_directory = file_parent.clone();
-    npc.jinxes_directory = file_parent.as_ref().map(|p| {
-        Path::new(p).join("jinxes").to_string_lossy().to_string()
-    });
+    npc.jinxes_directory = file_parent
+        .as_ref()
+        .map(|p| Path::new(p).join("jinxes").to_string_lossy().to_string());
     npc.npc_jinxes_directory = npc.jinxes_directory.clone();
 
     npc.db_conn = None;
@@ -842,10 +1063,7 @@ fn expand_jinx_glob(pattern: &str) -> Vec<String> {
         if let Ok(paths) = glob::glob(&glob_pattern) {
             let names: Vec<String> = paths
                 .filter_map(|p| p.ok())
-                .filter_map(|p| {
-                    p.file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                })
+                .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
                 .collect();
             if !names.is_empty() {
                 return names;
@@ -863,10 +1081,7 @@ fn extract_jinx_call(line: &str) -> Option<String> {
         return None;
     }
 
-    let inner = line
-        .trim_start_matches("{{")
-        .trim_end_matches("}}")
-        .trim();
+    let inner = line.trim_start_matches("{{").trim_end_matches("}}").trim();
 
     if !inner.starts_with("Jinx(") {
         return None;
@@ -885,7 +1100,6 @@ fn extract_jinx_call(line: &str) -> Option<String> {
 
     Some(name_part.to_string())
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Jinx {
@@ -1044,10 +1258,7 @@ impl Jinx {
                 );
             }
 
-            properties.insert(
-                input.name.clone(),
-                serde_json::Value::Object(prop),
-            );
+            properties.insert(input.name.clone(), serde_json::Value::Object(prop));
 
             if input.default.is_none() {
                 required.push(serde_json::Value::String(input.name.clone()));
@@ -1094,8 +1305,10 @@ impl Jinx {
         let _ = std::fs::create_dir_all(dir);
         let filename = format!("{}.jinx", self.name);
         let path = dir.join(&filename);
-        let yaml = serde_yaml::to_string(self).map_err(|e| crate::error::NpcError::Shell(format!("YAML serialize: {}", e)))?;
-        std::fs::write(&path, yaml).map_err(|e| crate::error::NpcError::Shell(format!("Write jinx: {}", e)))?;
+        let yaml = serde_yaml::to_string(self)
+            .map_err(|e| crate::error::NpcError::Shell(format!("YAML serialize: {}", e)))?;
+        std::fs::write(&path, yaml)
+            .map_err(|e| crate::error::NpcError::Shell(format!("Write jinx: {}", e)))?;
         Ok(())
     }
 
@@ -1104,7 +1317,8 @@ impl Jinx {
         input_values: &std::collections::HashMap<String, String>,
     ) -> crate::npc_compiler::JinxResult {
         let mut output = String::new();
-        let mut context: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+        let mut context: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
         let mut success = true;
 
         for step in &self.steps {
@@ -1120,12 +1334,12 @@ impl Jinx {
             }
 
             let result = match step.engine.as_str() {
-                "bash" | "sh" => {
-                    std::process::Command::new("sh").args(["-c", &rendered]).output()
-                }
-                "python" | "python3" => {
-                    std::process::Command::new("python3").args(["-c", &rendered]).output()
-                }
+                "bash" | "sh" => std::process::Command::new("sh")
+                    .args(["-c", &rendered])
+                    .output(),
+                "python" | "python3" => std::process::Command::new("python3")
+                    .args(["-c", &rendered])
+                    .output(),
                 _ => {
                     output.push_str(&format!("Unknown engine: {}\n", step.engine));
                     success = false;
@@ -1157,7 +1371,11 @@ impl Jinx {
             output,
             context,
             success,
-            error: if success { None } else { Some("Step failed".into()) },
+            error: if success {
+                None
+            } else {
+                Some("Step failed".into())
+            },
         }
     }
 
@@ -1193,11 +1411,10 @@ pub fn load_jinx_from_file(path: impl AsRef<Path>) -> Result<Jinx> {
 
     let cleaned = strip_jinja2_specifics(&raw);
 
-    let mut jinx: Jinx =
-        serde_yaml::from_str(&cleaned).map_err(|e| NpcError::YamlParse {
-            path: path.display().to_string(),
-            source: e,
-        })?;
+    let mut jinx: Jinx = serde_yaml::from_str(&cleaned).map_err(|e| NpcError::YamlParse {
+        path: path.display().to_string(),
+        source: e,
+    })?;
 
     jinx.source_path = Some(path.display().to_string());
 
@@ -1248,7 +1465,6 @@ fn strip_jinja2_specifics(raw: &str) -> String {
     raw.to_string()
 }
 
-
 pub async fn execute_jinx(
     jinx: &Jinx,
     input_values: &HashMap<String, String>,
@@ -1267,18 +1483,21 @@ pub async fn execute_jinx_with_npc(
     let mut output = String::new();
 
     if let Some(npc) = npc {
-        context.insert("npc".to_string(), serde_json::json!({
-            "name": npc.name,
-            "model": npc.model,
-            "provider": npc.provider,
-            "primary_directive": npc.primary_directive,
-            "api_url": npc.api_url,
-            "api_key": npc.api_key,
-            "db_conn": npc.db_conn,
-            "plain_system_message": npc.plain_system_message,
-            "npc_directory": npc.npc_directory,
-            "source_path": npc.source_path,
-        }));
+        context.insert(
+            "npc".to_string(),
+            serde_json::json!({
+                "name": npc.name,
+                "model": npc.model,
+                "provider": npc.provider,
+                "primary_directive": npc.primary_directive,
+                "api_url": npc.api_url,
+                "api_key": npc.api_key,
+                "db_conn": npc.db_conn,
+                "plain_system_message": npc.plain_system_message,
+                "npc_directory": npc.npc_directory,
+                "source_path": npc.source_path,
+            }),
+        );
         if let Some(ref team) = npc.team {
             context.insert("team_path".to_string(), serde_json::json!(team.source_dir));
         }
@@ -1290,10 +1509,7 @@ pub async fn execute_jinx_with_npc(
             .cloned()
             .or_else(|| input.default.clone())
             .unwrap_or_default();
-        context.insert(
-            input.name.clone(),
-            serde_json::Value::String(value),
-        );
+        context.insert(input.name.clone(), serde_json::Value::String(value));
     }
 
     let needs_tty = jinx_needs_tty(jinx);
@@ -1312,10 +1528,7 @@ pub async fn execute_jinx_with_npc(
                     step.name.clone(),
                     serde_json::Value::String(step_output.clone()),
                 );
-                context.insert(
-                    "output".to_string(),
-                    serde_json::Value::String(step_output),
-                );
+                context.insert("output".to_string(), serde_json::Value::String(step_output));
             }
             Err(e) => {
                 return Ok(JinxResult {
@@ -1362,9 +1575,7 @@ async fn execute_step(
             let rendered = render_step_template(&step.code, context)?;
             execute_rust(&rendered, context).await
         }
-        "python" => {
-            execute_python_via_npcpy(&step.code, context).await
-        }
+        "python" => execute_python_via_npcpy(&step.code, context).await,
         "bash" => {
             let rendered = render_step_template(&step.code, context)?;
             execute_bash(&rendered).await
@@ -1383,9 +1594,7 @@ async fn execute_step_interactive(
             let rendered = render_step_template(&step.code, context)?;
             execute_rust(&rendered, context).await
         }
-        "python" => {
-            execute_python_via_npcpy(&step.code, context).await
-        }
+        "python" => execute_python_via_npcpy(&step.code, context).await,
         "bash" => {
             let rendered = render_step_template(&step.code, context)?;
             execute_bash_interactive(&rendered).await
@@ -1458,12 +1667,7 @@ async fn execute_sub_jinx(
     if let Some(sub_jinx) = available_jinxes.get(engine_name) {
         let inputs: HashMap<String, String> = context
             .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    v.as_str().unwrap_or(&v.to_string()).to_string(),
-                )
-            })
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string()))
             .collect();
         let result = Box::pin(execute_jinx(sub_jinx, &inputs, available_jinxes)).await?;
         if result.success {
@@ -1496,7 +1700,6 @@ fn render_step_template(
     Ok(tera.render("step", &ctx)?)
 }
 
-
 async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) -> Result<String> {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1506,7 +1709,10 @@ async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) 
     let cache_dir = crate::npc_sysenv::get_cache_dir().join("rust_jinxes");
     let _ = std::fs::create_dir_all(&cache_dir);
     let crate_dir = cache_dir.join(format!("jinx_{:x}", hash));
-    let bin_path = crate_dir.join("target").join("release").join(format!("jinx_{:x}", hash));
+    let bin_path = crate_dir
+        .join("target")
+        .join("release")
+        .join(format!("jinx_{:x}", hash));
     let src_path = crate_dir.join("src").join("main.rs");
 
     if !bin_path.exists() {
@@ -1523,7 +1729,9 @@ async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) 
                     local_path = Some(dir.join("npcrs").to_string_lossy().to_string());
                     break;
                 }
-                if !dir.pop() { break; }
+                if !dir.pop() {
+                    break;
+                }
             }
             if let Some(p) = local_path {
                 format!("npcrs = {{ path = \"{}\" }}", p)
@@ -1534,11 +1742,15 @@ async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) 
         let cargo_toml = format!(
             "[package]\nname = \"jinx_{hash:x}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n{npcrs_dep}\nserde_json = \"1\"\ntokio = {{ version = \"1\", features = [\"full\"] }}\n",
         );
-        std::fs::write(crate_dir.join("Cargo.toml"), &cargo_toml).map_err(|e| NpcError::JinxExecution {
-            step: "rust".into(), reason: format!("Write Cargo.toml: {}", e),
+        std::fs::write(crate_dir.join("Cargo.toml"), &cargo_toml).map_err(|e| {
+            NpcError::JinxExecution {
+                step: "rust".into(),
+                reason: format!("Write Cargo.toml: {}", e),
+            }
         })?;
         std::fs::write(&src_path, code).map_err(|e| NpcError::JinxExecution {
-            step: "rust".into(), reason: format!("Write source: {}", e),
+            step: "rust".into(),
+            reason: format!("Write source: {}", e),
         })?;
 
         let compile = Command::new("cargo")
@@ -1548,12 +1760,14 @@ async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) 
             .output()
             .await
             .map_err(|e| NpcError::JinxExecution {
-                step: "rust".into(), reason: format!("cargo not found: {}", e),
+                step: "rust".into(),
+                reason: format!("cargo not found: {}", e),
             })?;
         if !compile.status.success() {
             let stderr = String::from_utf8_lossy(&compile.stderr);
             return Err(NpcError::JinxExecution {
-                step: "rust".into(), reason: format!("Compilation failed:\n{}", stderr),
+                step: "rust".into(),
+                reason: format!("Compilation failed:\n{}", stderr),
             });
         }
     }
@@ -1564,7 +1778,8 @@ async fn execute_rust(code: &str, context: &HashMap<String, serde_json::Value>) 
         .output()
         .await
         .map_err(|e| NpcError::JinxExecution {
-            step: "rust".into(), reason: format!("Run binary: {}", e),
+            step: "rust".into(),
+            reason: format!("Run binary: {}", e),
         })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1627,17 +1842,27 @@ async fn execute_bash_interactive(code: &str) -> Result<String> {
     })
 }
 
-async fn execute_python_via_npcpy(code: &str, context: &HashMap<String, serde_json::Value>) -> Result<String> {
+async fn execute_python_via_npcpy(
+    code: &str,
+    context: &HashMap<String, serde_json::Value>,
+) -> Result<String> {
     let ctx_json = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
     let tmp = std::env::temp_dir();
     let ctx_file = tmp.join(format!("npcsh_ctx_{}.json", std::process::id()));
     let code_file = tmp.join(format!("npcsh_code_{}.py", std::process::id()));
     let runner_file = tmp.join(format!("npcsh_run_{}.py", std::process::id()));
 
-    std::fs::write(&ctx_file, &ctx_json).map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: e.to_string() })?;
-    std::fs::write(&code_file, code).map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: e.to_string() })?;
+    std::fs::write(&ctx_file, &ctx_json).map_err(|e| NpcError::JinxExecution {
+        step: "python".into(),
+        reason: e.to_string(),
+    })?;
+    std::fs::write(&code_file, code).map_err(|e| NpcError::JinxExecution {
+        step: "python".into(),
+        reason: e.to_string(),
+    })?;
 
-    let runner = format!(r#"
+    let runner = format!(
+        r#"
 import json, sys, os
 sys.path.insert(0, os.getcwd())
 with open('{}') as f:
@@ -1684,9 +1909,16 @@ except Exception as e:
 result = context.get('output', output)
 if result:
     print(result, end='')
-"#, ctx_file.display(), ctx_file.display(), code_file.display());
+"#,
+        ctx_file.display(),
+        ctx_file.display(),
+        code_file.display()
+    );
 
-    std::fs::write(&runner_file, &runner).map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: e.to_string() })?;
+    std::fs::write(&runner_file, &runner).map_err(|e| NpcError::JinxExecution {
+        step: "python".into(),
+        reason: e.to_string(),
+    })?;
 
     let output = Command::new("python3")
         .arg(&runner_file)
@@ -1695,17 +1927,23 @@ if result:
         .stderr(std::process::Stdio::inherit())
         .output()
         .await
-        .map_err(|e| NpcError::JinxExecution { step: "python".into(), reason: format!("Failed to run Python: {}", e) })?;
+        .map_err(|e| NpcError::JinxExecution {
+            step: "python".into(),
+            reason: format!("Failed to run Python: {}", e),
+        })?;
     let _ = std::fs::remove_file(&runner_file);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
         Ok(stdout.to_string())
     } else {
-        Ok(format!("{}[python exit code: {}]", stdout, output.status.code().unwrap_or(-1)))
+        Ok(format!(
+            "{}[python exit code: {}]",
+            stdout,
+            output.status.code().unwrap_or(-1)
+        ))
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Team {
@@ -1775,19 +2013,27 @@ impl Team {
         self.lead_npc()
     }
 
-    pub async fn orchestrate(&self, request: &str) -> crate::error::Result<HashMap<String, serde_json::Value>> {
-        let forenpc = self.get_forenpc().ok_or_else(|| crate::error::NpcError::Shell("No forenpc set".into()))?;
+    pub async fn orchestrate(
+        &self,
+        request: &str,
+    ) -> crate::error::Result<HashMap<String, serde_json::Value>> {
+        let forenpc = self
+            .get_forenpc()
+            .ok_or_else(|| crate::error::NpcError::Shell("No forenpc set".into()))?;
         let model = forenpc.resolved_model();
         let provider = forenpc.resolved_provider();
 
-        let team_members: Vec<String> = self.npcs.keys()
+        let team_members: Vec<String> = self
+            .npcs
+            .keys()
             .filter(|n| Some(n.as_str()) != self.forenpc.as_deref())
             .map(|n| format!("@{}", n))
             .collect();
 
         let prompt = format!(
             "You are the team coordinator. Team members: {}\n\nRequest: {}\n\nDecide how to handle this. Delegate to team members using @name if needed, or answer directly.",
-            team_members.join(", "), request
+            team_members.join(", "),
+            request
         );
 
         let mut messages = Vec::new();
@@ -1800,17 +2046,22 @@ impl Team {
             self.context.as_deref(),
             &self.jinxes,
             3,
-        ).await?;
+        )
+        .await?;
 
         Ok(result)
     }
 
     pub fn update_context(&mut self, messages: &[crate::r#gen::Message]) {
-        let recent: String = messages.iter()
-            .rev().take(5)
+        let recent: String = messages
+            .iter()
+            .rev()
+            .take(5)
             .filter_map(|m| m.content.as_ref().map(|c| format!("{}: {}", m.role, c)))
-            .collect::<Vec<_>>().join("\n");
-        self.shared_context.insert("recent_messages".into(), serde_json::json!(recent));
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.shared_context
+            .insert("recent_messages".into(), serde_json::json!(recent));
     }
 
     pub fn to_dict(&self) -> serde_json::Value {
@@ -2005,7 +2256,8 @@ fn load_agents_from_md(
         if let Some(name) = line.strip_prefix("## ") {
             if let Some(prev_name) = current_name.take() {
                 if !npcs.contains_key(&prev_name) {
-                    let mut npc = crate::npc_compiler::NPC::new(&prev_name, current_body.join("\n").trim());
+                    let mut npc =
+                        crate::npc_compiler::NPC::new(&prev_name, current_body.join("\n").trim());
                     npc.model = team_model.clone();
                     npc.provider = team_provider.clone();
                     npcs.insert(prev_name, npc);
@@ -2044,7 +2296,11 @@ fn load_agents_from_dir(
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() || npcs.contains_key(&name) {
             continue;
         }
@@ -2140,13 +2396,13 @@ impl Agent {
         let mut final_output = String::new();
         for _ in 0..10 {
             let response = crate::r#gen::get_genai_response(
-                    &provider,
-                    &model,
-                    &msgs,
-                    tools,
-                    self.npc.api_url.as_deref(),
-                )
-                .await?;
+                &provider,
+                &model,
+                &msgs,
+                tools,
+                self.npc.api_url.as_deref(),
+            )
+            .await?;
 
             if let Some(ref tool_calls) = response.message.tool_calls {
                 msgs.push(response.message.clone());
@@ -2198,10 +2454,12 @@ impl CodingAgent {
     }
 
     pub fn extract_code_blocks(&self, text: &str) -> Vec<String> {
-        let pattern = format!(r"```(?i:{})\s*\n([\s\S]*?)```", regex::escape(&self.language));
-        let re = regex::Regex::new(&pattern).unwrap_or_else(|_| {
-            regex::Regex::new(r"```\w*\s*\n([\s\S]*?)```").unwrap()
-        });
+        let pattern = format!(
+            r"```(?i:{})\s*\n([\s\S]*?)```",
+            regex::escape(&self.language)
+        );
+        let re = regex::Regex::new(&pattern)
+            .unwrap_or_else(|_| regex::Regex::new(r"```\w*\s*\n([\s\S]*?)```").unwrap());
         re.captures_iter(text)
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
             .collect()
@@ -2215,11 +2473,7 @@ impl CodingAgent {
             _ => return format!("Execution not supported for: {}", self.language),
         };
 
-        match tokio::process::Command::new(cmd)
-            .args(&args)
-            .output()
-            .await
-        {
+        match tokio::process::Command::new(cmd).args(&args).output().await {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let stderr = String::from_utf8_lossy(&out.stderr);
@@ -2338,15 +2592,22 @@ fn register_default_tools(registry: &mut ToolRegistry) {
         ToolBuilder::new("edit_file")
             .description("Edit a file: create, append, or replace text")
             .param("path", "string", "File path", true)
-            .param("action", "string", "Action: create, write, append, replace", false)
-            .param("new_text", "string", "Text to write/append/replace with", false)
+            .param(
+                "action",
+                "string",
+                "Action: create, write, append, replace",
+                false,
+            )
+            .param(
+                "new_text",
+                "string",
+                "Text to write/append/replace with",
+                false,
+            )
             .param("old_text", "string", "Text to find (for replace)", false)
             .build(Box::new(|args| {
                 Box::pin(async move {
-                    let path = args
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     let path = shellexpand::tilde(path).to_string();
                     let action = args
                         .get("action")
@@ -2357,10 +2618,7 @@ fn register_default_tools(registry: &mut ToolRegistry) {
                         .or(args.get("content"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    let old_text = args
-                        .get("old_text")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let old_text = args.get("old_text").and_then(|v| v.as_str()).unwrap_or("");
 
                     match action {
                         "create" | "write" => match std::fs::write(&path, new_text) {
@@ -2415,7 +2673,10 @@ fn register_default_tools(registry: &mut ToolRegistry) {
                                     &content[..10000]
                                 ))
                             } else {
-                                Ok(format!("File: {} ({} lines)\n---\n{}", path, lines, content))
+                                Ok(format!(
+                                    "File: {} ({} lines)\n---\n{}",
+                                    path, lines, content
+                                ))
                             }
                         }
                         Err(e) => Ok(format!("Error: {}", e)),
@@ -2508,5 +2769,4 @@ fn register_default_tools(registry: &mut ToolRegistry) {
                 })
             })),
     );
-
 }

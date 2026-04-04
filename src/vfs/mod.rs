@@ -1,4 +1,3 @@
-
 use crate::error::Result;
 use std::path::{Path, PathBuf};
 
@@ -70,12 +69,10 @@ impl Vfs {
             }
             VfsResolution::Virtual(node) => Ok(format!("[virtual: {:?}]", node)),
             VfsResolution::Directory(entries) => Ok(entries.join("\n")),
-            VfsResolution::NotFound => {
-                Err(crate::error::NpcError::Other(format!(
-                    "ENOENT: {} not found",
-                    vfs_path
-                )))
-            }
+            VfsResolution::NotFound => Err(crate::error::NpcError::Other(format!(
+                "ENOENT: {} not found",
+                vfs_path
+            ))),
         }
     }
 
@@ -90,11 +87,9 @@ impl Vfs {
                         }
                     })?;
                 }
-                std::fs::write(&path, content).map_err(|e| {
-                    crate::error::NpcError::FileLoad {
-                        path: path.display().to_string(),
-                        source: e,
-                    }
+                std::fs::write(&path, content).map_err(|e| crate::error::NpcError::FileLoad {
+                    path: path.display().to_string(),
+                    source: e,
                 })
             }
             VfsResolution::Virtual(_) => Err(crate::error::NpcError::Other(

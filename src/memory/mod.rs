@@ -1,7 +1,6 @@
-
 mod command_history;
-mod knowledge_graph;
 pub mod embeddings;
+mod knowledge_graph;
 pub mod memory_processor;
 pub mod search;
 

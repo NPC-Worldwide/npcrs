@@ -1,8 +1,7 @@
-
+use crate::error::Result;
 use crate::r#gen::Message;
 use crate::memory::CommandHistory;
 use crate::npc_compiler::{NPC, Team};
-use crate::error::Result;
 
 pub struct ShellState {
     pub npc: NPC,

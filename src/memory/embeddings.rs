@@ -1,4 +1,3 @@
-
 use crate::error::{NpcError, Result};
 use reqwest::Client;
 
@@ -58,10 +57,7 @@ async fn get_embeddings_ollama(client: &Client, text: &str, model: &str) -> Resu
             NpcError::LlmRequest("Ollama embeddings response missing 'embedding' field".into())
         })?;
 
-    let vec: Vec<f64> = embedding
-        .iter()
-        .filter_map(|v| v.as_f64())
-        .collect();
+    let vec: Vec<f64> = embedding.iter().filter_map(|v| v.as_f64()).collect();
 
     if vec.is_empty() {
         return Err(NpcError::LlmRequest(
@@ -107,10 +103,7 @@ async fn get_embeddings_openai(
             )
         })?;
 
-    let vec: Vec<f64> = embedding
-        .iter()
-        .filter_map(|v| v.as_f64())
-        .collect();
+    let vec: Vec<f64> = embedding.iter().filter_map(|v| v.as_f64()).collect();
 
     if vec.is_empty() {
         return Err(NpcError::LlmRequest(

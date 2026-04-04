@@ -1,7 +1,12 @@
 use crate::error::{NpcError, Result};
 use std::collections::HashMap;
 
-pub async fn tts_elevenlabs(text: &str, voice: &str, api_key: Option<&str>, model: Option<&str>) -> Result<Vec<u8>> {
+pub async fn tts_elevenlabs(
+    text: &str,
+    voice: &str,
+    api_key: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<u8>> {
     let key = api_key
         .map(String::from)
         .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok())
@@ -13,14 +18,19 @@ pub async fn tts_elevenlabs(text: &str, voice: &str, api_key: Option<&str>, mode
         "model_id": model_id,
     });
     let client = reqwest::Client::new();
-    let resp = client.post(&url)
+    let resp = client
+        .post(&url)
         .header("xi-api-key", &key)
         .header("Content-Type", "application/json")
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
     if !resp.status().is_success() {
         let err = resp.text().await.unwrap_or_default();
-        return Err(NpcError::Generation(format!("ElevenLabs TTS failed: {}", err)));
+        return Err(NpcError::Generation(format!(
+            "ElevenLabs TTS failed: {}",
+            err
+        )));
     }
     Ok(resp.bytes().await?.to_vec())
 }
@@ -31,16 +41,29 @@ pub async fn get_elevenlabs_voices(api_key: Option<&str>) -> Result<Vec<String>>
         .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok())
         .ok_or_else(|| NpcError::LlmRequest("ELEVENLABS_API_KEY not set".into()))?;
     let client = reqwest::Client::new();
-    let resp = client.get("https://api.elevenlabs.io/v1/voices")
+    let resp = client
+        .get("https://api.elevenlabs.io/v1/voices")
         .header("xi-api-key", &key)
-        .send().await?;
+        .send()
+        .await?;
     let json: serde_json::Value = resp.json().await?;
-    Ok(json.get("voices").and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from)).collect())
+    Ok(json
+        .get("voices")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
-pub async fn tts_openai(text: &str, voice: &str, api_key: Option<&str>, model: Option<&str>) -> Result<Vec<u8>> {
+pub async fn tts_openai(
+    text: &str,
+    voice: &str,
+    api_key: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<u8>> {
     let key = api_key
         .map(String::from)
         .or_else(|| std::env::var("OPENAI_API_KEY").ok())
@@ -52,10 +75,12 @@ pub async fn tts_openai(text: &str, voice: &str, api_key: Option<&str>, model: O
         "voice": voice,
     });
     let client = reqwest::Client::new();
-    let resp = client.post("https://api.openai.com/v1/audio/speech")
+    let resp = client
+        .post("https://api.openai.com/v1/audio/speech")
         .header("Authorization", format!("Bearer {}", key))
         .json(&body)
-        .send().await?;
+        .send()
+        .await?;
     if !resp.status().is_success() {
         let err = resp.text().await.unwrap_or_default();
         return Err(NpcError::Generation(format!("OpenAI TTS failed: {}", err)));
@@ -65,7 +90,9 @@ pub async fn tts_openai(text: &str, voice: &str, api_key: Option<&str>, model: O
 
 pub fn get_openai_voices() -> Vec<String> {
     vec!["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
-        .into_iter().map(String::from).collect()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 pub async fn tts_gemini(text: &str, voice: &str, api_key: Option<&str>) -> Result<Vec<u8>> {
@@ -94,20 +121,30 @@ pub async fn tts_gemini(text: &str, voice: &str, api_key: Option<&str>) -> Resul
     let json: serde_json::Value = resp.json().await?;
     if let Some(b64) = json["candidates"][0]["content"]["parts"][0]["inlineData"]["data"].as_str() {
         use base64::Engine;
-        let data = base64::engine::general_purpose::STANDARD.decode(b64)
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(b64)
             .map_err(|e| NpcError::Generation(format!("Base64 decode: {}", e)))?;
         Ok(data)
     } else {
-        Err(NpcError::Generation("No audio in Gemini TTS response".into()))
+        Err(NpcError::Generation(
+            "No audio in Gemini TTS response".into(),
+        ))
     }
 }
 
 pub fn get_gemini_voices() -> Vec<String> {
     vec!["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
-        .into_iter().map(String::from).collect()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
-pub async fn text_to_speech(text: &str, engine: &str, voice: Option<&str>, api_key: Option<&str>) -> Result<Vec<u8>> {
+pub async fn text_to_speech(
+    text: &str,
+    engine: &str,
+    voice: Option<&str>,
+    api_key: Option<&str>,
+) -> Result<Vec<u8>> {
     match engine {
         "openai" => {
             let v = voice.unwrap_or("alloy");
@@ -121,7 +158,9 @@ pub async fn text_to_speech(text: &str, engine: &str, voice: Option<&str>, api_k
             let v = voice.unwrap_or("Puck");
             tts_gemini(text, v, api_key).await
         }
-        _ => Err(NpcError::UnsupportedProvider { provider: engine.to_string() }),
+        _ => Err(NpcError::UnsupportedProvider {
+            provider: engine.to_string(),
+        }),
     }
 }
 
@@ -136,8 +175,14 @@ pub fn get_available_voices(engine: &str) -> Vec<String> {
 pub fn get_available_engines() -> HashMap<String, bool> {
     let mut engines = HashMap::new();
     engines.insert("openai".into(), std::env::var("OPENAI_API_KEY").is_ok());
-    engines.insert("elevenlabs".into(), std::env::var("ELEVENLABS_API_KEY").is_ok());
-    engines.insert("gemini".into(), std::env::var("GOOGLE_API_KEY").is_ok() || std::env::var("GEMINI_API_KEY").is_ok());
+    engines.insert(
+        "elevenlabs".into(),
+        std::env::var("ELEVENLABS_API_KEY").is_ok(),
+    );
+    engines.insert(
+        "gemini".into(),
+        std::env::var("GOOGLE_API_KEY").is_ok() || std::env::var("GEMINI_API_KEY").is_ok(),
+    );
     engines
 }
 
@@ -183,6 +228,7 @@ pub fn audio_to_base64(audio_data: &[u8]) -> String {
 
 pub fn base64_to_audio(b64_string: &str) -> Result<Vec<u8>> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(b64_string)
+    base64::engine::general_purpose::STANDARD
+        .decode(b64_string)
         .map_err(|e| NpcError::Generation(format!("Base64 decode: {}", e)))
 }

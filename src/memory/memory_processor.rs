@@ -1,7 +1,6 @@
-
 use crate::error::Result;
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MemoryStatus {
@@ -56,8 +55,8 @@ pub fn get_pending_memories(conn: &Connection) -> Result<Vec<Memory>> {
     let memories = stmt
         .query_map(params![], |row| {
             let embedding_blob: Option<Vec<u8>> = row.get(4)?;
-            let embedding = embedding_blob
-                .and_then(|blob| serde_json::from_slice::<Vec<f64>>(&blob).ok());
+            let embedding =
+                embedding_blob.and_then(|blob| serde_json::from_slice::<Vec<f64>>(&blob).ok());
             let status_str: String = row.get(3)?;
             Ok(Memory {
                 id: row.get(0)?,
@@ -84,8 +83,9 @@ pub fn update_memory_status(conn: &Connection, id: i64, status: MemoryStatus) ->
 }
 
 pub fn set_memory_embedding(conn: &Connection, id: i64, embedding: &[f64]) -> Result<()> {
-    let blob = serde_json::to_vec(embedding)
-        .map_err(|e| crate::error::NpcError::Other(format!("Failed to serialize embedding: {}", e)))?;
+    let blob = serde_json::to_vec(embedding).map_err(|e| {
+        crate::error::NpcError::Other(format!("Failed to serialize embedding: {}", e))
+    })?;
     conn.execute(
         "UPDATE npc_memories SET embedding = ?1 WHERE id = ?2",
         params![blob, id],
@@ -109,8 +109,9 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL,
                 updated_at TEXT
-            );"
-        ).unwrap();
+            );",
+        )
+        .unwrap();
         conn
     }
 

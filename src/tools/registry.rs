@@ -5,9 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub type ToolHandler = Box<
-    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<String>> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<String>> + Send>> + Send + Sync,
 >;
 
 pub struct ToolRegistry {
@@ -104,13 +102,7 @@ impl ToolBuilder {
         self
     }
 
-    pub fn param(
-        mut self,
-        name: &str,
-        type_str: &str,
-        description: &str,
-        required: bool,
-    ) -> Self {
+    pub fn param(mut self, name: &str, type_str: &str, description: &str, required: bool) -> Self {
         if let Some(props) = self.parameters.get_mut("properties") {
             props[name] = serde_json::json!({
                 "type": type_str,
@@ -169,11 +161,7 @@ pub fn flatten_tool_messages(messages: &[Message]) -> Vec<Message> {
                 out.push(msg.clone());
             }
         } else if msg.role == "tool" {
-            let content = msg
-                .content
-                .as_deref()
-                .unwrap_or("[no output]")
-                .to_string();
+            let content = msg.content.as_deref().unwrap_or("[no output]").to_string();
             let label = if let Some(ref id) = msg.tool_call_id {
                 format!("[Tool Result ({})]:\n{}", id, content)
             } else {
@@ -244,9 +232,7 @@ mod tests {
             .unwrap();
         assert_eq!(result, "echo: hello");
 
-        let err = registry
-            .execute("unknown", serde_json::Value::Null)
-            .await;
+        let err = registry.execute("unknown", serde_json::Value::Null).await;
         assert!(err.is_err());
     }
 
@@ -259,10 +245,7 @@ mod tests {
             .param("name", "string", "Name to greet", true)
             .build(Box::new(|args| {
                 Box::pin(async move {
-                    let name = args
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("world");
+                    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("world");
                     Ok(format!("Hello, {}!", name))
                 })
             }));

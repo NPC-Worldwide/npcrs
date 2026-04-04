@@ -1,4 +1,3 @@
-
 use crate::r#gen::Message;
 
 pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
@@ -13,10 +12,8 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
 
         if msg.role == "assistant" && msg.tool_calls.is_some() {
             let tool_calls = msg.tool_calls.as_ref().unwrap();
-            let expected_ids: std::collections::HashSet<&str> = tool_calls
-                .iter()
-                .map(|tc| tc.id.as_str())
-                .collect();
+            let expected_ids: std::collections::HashSet<&str> =
+                tool_calls.iter().map(|tc| tc.id.as_str()).collect();
 
             let mut fulfilled_ids = std::collections::HashSet::new();
             let mut j = i + 1;
@@ -44,7 +41,10 @@ pub fn sanitize_messages(messages: Vec<Message>) -> Vec<Message> {
             let content = msg.content.as_deref().unwrap_or("");
             let name = msg.name.as_deref().unwrap_or("tool");
             if name != "tool" {
-                cleaned.push(Message::assistant(format!("[{} result]: {}", name, content)));
+                cleaned.push(Message::assistant(format!(
+                    "[{} result]: {}",
+                    name, content
+                )));
             } else {
                 cleaned.push(Message::assistant(content));
             }

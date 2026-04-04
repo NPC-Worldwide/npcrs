@@ -1,6 +1,5 @@
-
-use tera::{Context, Tera};
 use std::collections::HashMap;
+use tera::{Context, Tera};
 
 pub fn create_engine() -> Tera {
     let mut tera = Tera::default();
@@ -53,10 +52,7 @@ mod tests {
     #[test]
     fn test_render_tojson_filter() {
         let mut ctx = HashMap::new();
-        ctx.insert(
-            "data".to_string(),
-            serde_json::json!({"key": "value"}),
-        );
+        ctx.insert("data".to_string(), serde_json::json!({"key": "value"}));
 
         let result = render("{{ data | tojson }}", &ctx).unwrap();
         assert!(result.contains("key"));

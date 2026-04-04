@@ -7,7 +7,8 @@ pub struct DbPool {
 
 impl DbPool {
     pub async fn connect(url: &str) -> Result<Self> {
-        let pool = AnyPool::connect(url).await
+        let pool = AnyPool::connect(url)
+            .await
             .map_err(|e| NpcError::Other(format!("DB connect: {}", e)))?;
         Ok(Self { pool })
     }
@@ -26,7 +27,9 @@ impl DbPool {
     }
 
     pub async fn execute(&self, sql: &str) -> Result<u64> {
-        let result = sqlx::query(sql).execute(&self.pool).await
+        let result = sqlx::query(sql)
+            .execute(&self.pool)
+            .await
             .map_err(|e| NpcError::Other(format!("DB execute: {}", e)))?;
         Ok(result.rows_affected())
     }
@@ -34,8 +37,12 @@ impl DbPool {
     pub async fn execute_batch(&self, sql: &str) -> Result<()> {
         for statement in sql.split(';') {
             let trimmed = statement.trim();
-            if trimmed.is_empty() { continue; }
-            sqlx::query(trimmed).execute(&self.pool).await
+            if trimmed.is_empty() {
+                continue;
+            }
+            sqlx::query(trimmed)
+                .execute(&self.pool)
+                .await
                 .map_err(|e| NpcError::Other(format!("DB batch: {}", e)))?;
         }
         Ok(())

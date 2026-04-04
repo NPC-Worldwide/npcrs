@@ -1,4 +1,3 @@
-
 use crate::process::Pid;
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
@@ -83,16 +82,9 @@ impl Scheduler {
         self.ready_queue.len()
     }
 
-    pub fn add_cron(
-        &mut self,
-        pid: Pid,
-        schedule: CronSchedule,
-        command: String,
-    ) {
+    pub fn add_cron(&mut self, pid: Pid, schedule: CronSchedule, command: String) {
         let next_run = match &schedule {
-            CronSchedule::Interval(secs) => {
-                Utc::now() + chrono::Duration::seconds(*secs as i64)
-            }
+            CronSchedule::Interval(secs) => Utc::now() + chrono::Duration::seconds(*secs as i64),
             CronSchedule::Once(at) => *at,
         };
 

@@ -37,8 +37,11 @@ pub fn setup_claude(uninstall: bool) -> Result<String> {
     });
 
     let manifest_path = plugins_dir.join("manifest.json");
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap_or_default())
-        .map_err(|e| NpcError::Shell(format!("write manifest: {}", e)))?;
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+    )
+    .map_err(|e| NpcError::Shell(format!("write manifest: {}", e)))?;
 
     Ok("Claude plugin installed".into())
 }
@@ -59,17 +62,27 @@ pub fn setup_codex(uninstall: bool) -> Result<String> {
         serde_json::json!({})
     };
 
-    let servers = existing.as_object_mut().unwrap().entry("mcpServers").or_insert(serde_json::json!({}));
-    servers.as_object_mut().unwrap().insert("npc".into(), serde_json::json!({
-        "command": "python3",
-        "args": ["-m", "npcpy.mcp_server"]
-    }));
+    let servers = existing
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}));
+    servers.as_object_mut().unwrap().insert(
+        "npc".into(),
+        serde_json::json!({
+            "command": "python3",
+            "args": ["-m", "npcpy.mcp_server"]
+        }),
+    );
 
     if let Some(parent) = mcp_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    std::fs::write(&mcp_path, serde_json::to_string_pretty(&existing).unwrap_or_default())
-        .map_err(|e| NpcError::Shell(format!("write: {}", e)))?;
+    std::fs::write(
+        &mcp_path,
+        serde_json::to_string_pretty(&existing).unwrap_or_default(),
+    )
+    .map_err(|e| NpcError::Shell(format!("write: {}", e)))?;
 
     Ok("Codex plugin installed".into())
 }
@@ -90,17 +103,27 @@ pub fn setup_gemini(uninstall: bool) -> Result<String> {
         serde_json::json!({})
     };
 
-    let servers = existing.as_object_mut().unwrap().entry("mcpServers").or_insert(serde_json::json!({}));
-    servers.as_object_mut().unwrap().insert("npc".into(), serde_json::json!({
-        "command": "python3",
-        "args": ["-m", "npcpy.mcp_server"]
-    }));
+    let servers = existing
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}));
+    servers.as_object_mut().unwrap().insert(
+        "npc".into(),
+        serde_json::json!({
+            "command": "python3",
+            "args": ["-m", "npcpy.mcp_server"]
+        }),
+    );
 
     if let Some(parent) = mcp_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    std::fs::write(&mcp_path, serde_json::to_string_pretty(&existing).unwrap_or_default())
-        .map_err(|e| NpcError::Shell(format!("write: {}", e)))?;
+    std::fs::write(
+        &mcp_path,
+        serde_json::to_string_pretty(&existing).unwrap_or_default(),
+    )
+    .map_err(|e| NpcError::Shell(format!("write: {}", e)))?;
 
     Ok("Gemini plugin installed".into())
 }

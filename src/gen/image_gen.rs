@@ -1,4 +1,3 @@
-
 use crate::error::{NpcError, Result};
 
 pub struct GeneratedImage {
@@ -71,9 +70,7 @@ async fn generate_image_openai(
     Ok(GeneratedImage {
         data,
         format: "png".into(),
-        revised_prompt: json["data"][0]["revised_prompt"]
-            .as_str()
-            .map(String::from),
+        revised_prompt: json["data"][0]["revised_prompt"].as_str().map(String::from),
     })
 }
 
@@ -119,11 +116,7 @@ async fn generate_image_gemini(
                         .decode(b64)
                         .map_err(|e| NpcError::LlmRequest(format!("Base64: {}", e)))?;
                     let mime = inline["mimeType"].as_str().unwrap_or("image/png");
-                    let format = if mime.contains("jpeg") {
-                        "jpeg"
-                    } else {
-                        "png"
-                    };
+                    let format = if mime.contains("jpeg") { "jpeg" } else { "png" };
                     return Ok(GeneratedImage {
                         data,
                         format: format.into(),
@@ -174,15 +167,23 @@ pub async fn generate_image_ollama(
 
     let json: serde_json::Value = resp.json().await?;
 
-    let b64 = json.get("image").and_then(|v| v.as_str())
-        .or_else(|| json.get("images").and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|v| v.as_str()));
+    let b64 = json.get("image").and_then(|v| v.as_str()).or_else(|| {
+        json.get("images")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+    });
 
     if let Some(b64) = b64 {
         use base64::Engine;
         let data = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| NpcError::LlmRequest(format!("Base64 decode: {}", e)))?;
-        Ok(GeneratedImage { data, format: "png".into(), revised_prompt: None })
+        Ok(GeneratedImage {
+            data,
+            format: "png".into(),
+            revised_prompt: None,
+        })
     } else {
         Err(NpcError::LlmRequest(format!(
             "No images returned from Ollama. Make sure '{}' is an image generation model.",
@@ -225,7 +226,13 @@ pub async fn edit_image(
                 .text("prompt", prompt.to_string())
                 .text("size", format!("{}x{}", width, height))
                 .text("response_format", "b64_json")
-                .part("image", reqwest::multipart::Part::bytes(image_bytes).file_name("image.png").mime_str("image/png").unwrap());
+                .part(
+                    "image",
+                    reqwest::multipart::Part::bytes(image_bytes)
+                        .file_name("image.png")
+                        .mime_str("image/png")
+                        .unwrap(),
+                );
 
             let resp = client
                 .post("https://api.openai.com/v1/images/edits")
@@ -240,11 +247,17 @@ pub async fn edit_image(
             }
 
             let json: serde_json::Value = resp.json().await?;
-            let b64 = json["data"][0]["b64_json"].as_str()
+            let b64 = json["data"][0]["b64_json"]
+                .as_str()
                 .ok_or_else(|| NpcError::LlmRequest("No image data in edit response".into()))?;
-            let data = base64::engine::general_purpose::STANDARD.decode(b64)
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(b64)
                 .map_err(|e| NpcError::LlmRequest(format!("Base64 decode: {}", e)))?;
-            Ok(GeneratedImage { data, format: "png".into(), revised_prompt: None })
+            Ok(GeneratedImage {
+                data,
+                format: "png".into(),
+                revised_prompt: None,
+            })
         }
         "gemini" => {
             let key = api_key
@@ -276,21 +289,34 @@ pub async fn edit_image(
             let resp = client.post(&url).json(&body).send().await?;
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                return Err(NpcError::LlmRequest(format!("Gemini image edit failed: {}", text)));
+                return Err(NpcError::LlmRequest(format!(
+                    "Gemini image edit failed: {}",
+                    text
+                )));
             }
 
             let json: serde_json::Value = resp.json().await?;
-            if let Some(b64) = json["candidates"][0]["content"]["parts"].as_array()
+            if let Some(b64) = json["candidates"][0]["content"]["parts"]
+                .as_array()
                 .and_then(|parts| parts.iter().find(|p| p.get("inlineData").is_some()))
                 .and_then(|p| p["inlineData"]["data"].as_str())
             {
-                let data = base64::engine::general_purpose::STANDARD.decode(b64)
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
                     .map_err(|e| NpcError::LlmRequest(format!("Base64: {}", e)))?;
-                Ok(GeneratedImage { data, format: "png".into(), revised_prompt: None })
+                Ok(GeneratedImage {
+                    data,
+                    format: "png".into(),
+                    revised_prompt: None,
+                })
             } else {
-                Err(NpcError::LlmRequest("No image in Gemini edit response".into()))
+                Err(NpcError::LlmRequest(
+                    "No image in Gemini edit response".into(),
+                ))
             }
         }
-        _ => Err(NpcError::UnsupportedProvider { provider: provider.to_string() }),
+        _ => Err(NpcError::UnsupportedProvider {
+            provider: provider.to_string(),
+        }),
     }
 }

@@ -1,14 +1,14 @@
-use npcrs::npc_compiler::{load_jinx_from_file, load_jinxes_from_directory, execute_jinx, Jinx};
+use npcrs::npc_compiler::{Jinx, execute_jinx, load_jinx_from_file, load_jinxes_from_directory};
 use std::collections::HashMap;
 
 #[test]
 fn test_load_all_jinxes() {
-    let jinx_dirs = vec![
-        "../npcsh/npcsh/npc_team/jinxes",
-    ];
+    let jinx_dirs = vec!["../npcsh/npcsh/npc_team/jinxes"];
     for dir in jinx_dirs {
         let path = std::path::Path::new(dir);
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         match load_jinxes_from_directory(path) {
             Ok(jinxes) => {
                 assert!(!jinxes.is_empty(), "No jinxes loaded from {}", dir);
@@ -17,8 +17,12 @@ fn test_load_all_jinxes() {
                     assert!(!jinx.steps.is_empty(), "Jinx '{}' has no steps", name);
                     for step in &jinx.steps {
                         assert!(
-                            ["bash", "python", "rust", "sh"].contains(&step.engine.as_str()) || jinxes.contains_key(&step.engine),
-                            "Jinx '{}' step '{}' has unknown engine '{}'", name, step.name, step.engine
+                            ["bash", "python", "rust", "sh"].contains(&step.engine.as_str())
+                                || jinxes.contains_key(&step.engine),
+                            "Jinx '{}' step '{}' has unknown engine '{}'",
+                            name,
+                            step.name,
+                            step.engine
                         );
                     }
                 }
@@ -32,12 +36,20 @@ fn test_load_all_jinxes() {
 #[test]
 fn test_jinx_to_tool_def() {
     let jinx_dir = std::path::Path::new("../npcsh/npcsh/npc_team/jinxes");
-    if !jinx_dir.exists() { return; }
+    if !jinx_dir.exists() {
+        return;
+    }
     let jinxes = load_jinxes_from_directory(jinx_dir).unwrap();
     let mut with_tools = 0;
     for (name, jinx) in &jinxes {
         if let Some(td) = jinx.to_tool_def() {
-            assert!(td.function.name == *name || jinx.aliases.contains(name), "Tool def name '{}' doesn't match key '{}' or aliases {:?}", td.function.name, name, jinx.aliases);
+            assert!(
+                td.function.name == *name || jinx.aliases.contains(name),
+                "Tool def name '{}' doesn't match key '{}' or aliases {:?}",
+                td.function.name,
+                name,
+                jinx.aliases
+            );
             assert!(td.function.description.is_some());
             with_tools += 1;
         }
@@ -94,7 +106,9 @@ async fn test_python_jinx_execution() {
 #[test]
 fn test_all_jinxes_have_descriptions() {
     let jinx_dir = std::path::Path::new("../npcsh/npcsh/npc_team/jinxes");
-    if !jinx_dir.exists() { return; }
+    if !jinx_dir.exists() {
+        return;
+    }
     let jinxes = load_jinxes_from_directory(jinx_dir).unwrap();
     let mut missing = vec![];
     for (name, jinx) in &jinxes {
@@ -103,18 +117,29 @@ fn test_all_jinxes_have_descriptions() {
         }
     }
     if !missing.is_empty() {
-        println!("WARNING: {} jinxes missing descriptions: {:?}", missing.len(), &missing[..missing.len().min(10)]);
+        println!(
+            "WARNING: {} jinxes missing descriptions: {:?}",
+            missing.len(),
+            &missing[..missing.len().min(10)]
+        );
     }
 }
 
 #[test]
 fn test_jinx_aliases() {
     let jinx_dir = std::path::Path::new("../npcsh/npcsh/npc_team/jinxes");
-    if !jinx_dir.exists() { return; }
+    if !jinx_dir.exists() {
+        return;
+    }
     let jinxes = load_jinxes_from_directory(jinx_dir).unwrap();
     for (name, jinx) in &jinxes {
         for alias in &jinx.aliases {
-            assert!(jinxes.contains_key(alias), "Alias '{}' for jinx '{}' should be registered", alias, name);
+            assert!(
+                jinxes.contains_key(alias),
+                "Alias '{}' for jinx '{}' should be registered",
+                alias,
+                name
+            );
         }
     }
 }

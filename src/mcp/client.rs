@@ -36,9 +36,9 @@ impl McpClient {
     pub async fn connect(spec: &McpServerSpec) -> Result<Self> {
         let child = if let Some(ref command) = spec.command {
             let parts: Vec<&str> = command.split_whitespace().collect();
-            let (cmd, args) = parts.split_first().ok_or_else(|| {
-                NpcError::Mcp("Empty command".to_string())
-            })?;
+            let (cmd, args) = parts
+                .split_first()
+                .ok_or_else(|| NpcError::Mcp("Empty command".to_string()))?;
 
             Command::new(cmd)
                 .args(args)
@@ -98,9 +98,7 @@ impl McpClient {
     }
 
     pub async fn list_tools(&mut self) -> Result<Vec<McpTool>> {
-        let resp = self
-            .send_request("tools/list", None)
-            .await?;
+        let resp = self.send_request("tools/list", None).await?;
 
         let tools_value = resp
             .get("tools")
@@ -115,27 +113,23 @@ impl McpClient {
             input_schema: Option<serde_json::Value>,
         }
 
-        let entries: Vec<ToolEntry> =
-            serde_json::from_value(tools_value).map_err(|e| {
-                NpcError::Mcp(format!("Failed to parse tools: {}", e))
-            })?;
+        let entries: Vec<ToolEntry> = serde_json::from_value(tools_value)
+            .map_err(|e| NpcError::Mcp(format!("Failed to parse tools: {}", e)))?;
 
         Ok(entries
             .into_iter()
             .map(|e| McpTool {
                 name: e.name,
                 description: e.description,
-                input_schema: e.input_schema.unwrap_or(serde_json::json!({"type": "object"})),
+                input_schema: e
+                    .input_schema
+                    .unwrap_or(serde_json::json!({"type": "object"})),
                 server_path: String::new(),
             })
             .collect())
     }
 
-    pub async fn call_tool(
-        &mut self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<String> {
+    pub async fn call_tool(&mut self, name: &str, arguments: serde_json::Value) -> Result<String> {
         let resp = self
             .send_request(
                 "tools/call",

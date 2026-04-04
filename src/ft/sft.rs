@@ -1,10 +1,10 @@
-
 use crate::error::{NpcError, Result};
 
 pub struct SftConfig {
     pub model: String,
     pub dataset: String,
     pub output_dir: String,
+    pub device: String, // "cpu", "cuda", "mlx"
     pub epochs: u32,
     pub batch_size: u32,
     pub learning_rate: f64,
@@ -18,6 +18,7 @@ impl Default for SftConfig {
             model: "qwen3.5:2b".into(),
             dataset: String::new(),
             output_dir: "./sft_output".into(),
+            device: "cpu".into(),
             epochs: 3,
             batch_size: 4,
             learning_rate: 2e-5,
@@ -30,7 +31,7 @@ impl Default for SftConfig {
 pub async fn train_sft(config: &SftConfig) -> Result<String> {
     let _ = config;
     Err(NpcError::Other(
-        "SFT training requires Python transformers/trl runtime. Use npcpy.ft.sft.".into()
+        "SFT training requires Python transformers/trl runtime. Use npcpy.ft.sft.".into(),
     ))
 }
 

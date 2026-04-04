@@ -1,4 +1,3 @@
-
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +10,9 @@ pub struct Trigger {
     pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 pub fn load_triggers(dir: &str) -> Result<Vec<Trigger>> {
     let mut triggers = Vec::new();

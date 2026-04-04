@@ -1,4 +1,3 @@
-
 pub const DEFAULT_MODEL: &str = "llama3.2";
 pub const DEFAULT_PROVIDER: &str = "ollama";
 

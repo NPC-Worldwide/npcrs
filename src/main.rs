@@ -1,4 +1,3 @@
-
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use rustyline::completion::{Completer, Pair};
@@ -26,9 +25,8 @@ struct NpcHelper {
 impl NpcHelper {
     fn new(npc_names: Vec<String>, jinx_names: Vec<String>) -> Self {
         let mut commands = vec![
-            "/ps", "/stats", "/help", "/quit", "/exit", "/clear",
-            "/agent", "/chat", "/cmd", "/switch", "/kill", "/jinxes",
-            "/set", "/history",
+            "/ps", "/stats", "/help", "/quit", "/exit", "/clear", "/agent", "/chat", "/cmd",
+            "/switch", "/kill", "/jinxes", "/set", "/history",
         ]
         .into_iter()
         .map(String::from)
@@ -38,7 +36,10 @@ impl NpcHelper {
             commands.push(format!("/{}", j));
         }
 
-        Self { npc_names, commands }
+        Self {
+            npc_names,
+            commands,
+        }
     }
 }
 
@@ -213,9 +214,13 @@ async fn main() -> Result<()> {
                     };
                     println!(
                         "  {CYAN}@{:<12}{RESET} pid:{:<3} {state_color}{:?}{RESET}  tokens:{}/{} cost:${:.4} turns:{}",
-                        p.npc.name, p.pid, p.state,
-                        p.usage.total_input_tokens, p.usage.total_output_tokens,
-                        p.usage.total_cost_usd, p.usage.total_turns,
+                        p.npc.name,
+                        p.pid,
+                        p.state,
+                        p.usage.total_input_tokens,
+                        p.usage.total_output_tokens,
+                        p.usage.total_cost_usd,
+                        p.usage.total_turns,
                     );
                 }
                 true
@@ -225,14 +230,23 @@ async fn main() -> Result<()> {
                 let s = kernel.stats();
                 println!(
                     "{BOLD}Kernel Stats{RESET}\n  uptime: {}s\n  processes: {} (run:{} blk:{} dead:{})\n  tokens: {} (in+out)\n  cost: ${:.4}\n  jinxes: {}",
-                    s.uptime_secs, s.total_processes, s.running, s.blocked, s.dead,
-                    s.total_tokens, s.total_cost_usd, s.jinx_count,
+                    s.uptime_secs,
+                    s.total_processes,
+                    s.running,
+                    s.blocked,
+                    s.dead,
+                    s.total_tokens,
+                    s.total_cost_usd,
+                    s.jinx_count,
                 );
                 true
             }
 
             "/help" => {
-                println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("CARGO_PKG_VERSION"));
+                println!(
+                    "{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n",
+                    env!("CARGO_PKG_VERSION")
+                );
                 println!("{BOLD}Modes:{RESET}");
                 println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
                 println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
@@ -283,7 +297,14 @@ async fn main() -> Result<()> {
                 sorted.sort();
                 println!("{BOLD}Available jinxes ({}):{RESET}", sorted.len());
                 for chunk in sorted.chunks(6) {
-                    println!("  {}", chunk.iter().map(|n| format!("{CYAN}/{n}{RESET}")).collect::<Vec<_>>().join("  "));
+                    println!(
+                        "  {}",
+                        chunk
+                            .iter()
+                            .map(|n| format!("{CYAN}/{n}{RESET}"))
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    );
                 }
                 true
             }
@@ -327,7 +348,10 @@ async fn main() -> Result<()> {
                     let name = kernel.get_process(current_pid).map(|p| p.npc.name.clone());
                     kernel.kill(current_pid, 0).ok();
                     current_pid = 0;
-                    eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
+                    eprintln!(
+                        "{YELLOW}Killed @{} — switched to init{RESET}",
+                        name.unwrap_or_default()
+                    );
                 }
                 true
             }
@@ -454,13 +478,11 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Mode::Chat => {
-                match kernel.exec_chat(current_pid, &input).await {
-                    Ok(output) if !output.is_empty() => println!("{}", output),
-                    Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                    _ => {}
-                }
-            }
+            Mode::Chat => match kernel.exec_chat(current_pid, &input).await {
+                Ok(output) if !output.is_empty() => println!("{}", output),
+                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
+                _ => {}
+            },
             Mode::Cmd => {
                 if !run_bash(&input).await {
                     match kernel.exec(current_pid, &input).await {
@@ -540,12 +562,22 @@ fn print_welcome(kernel: &Kernel) {
     eprintln!("  ██║ ╚████║██║     ╚██████╗███████║██║  ██║");
     eprintln!("  ╚═╝  ╚═══╝╚═╝      ╚═════╝╚══════╝╚═╝  ╚═╝");
     eprintln!("{RESET}");
-    eprintln!("  {BOLD}npcsh-rs{RESET} v{} — NPC Operating System Shell", env!("CARGO_PKG_VERSION"));
-    eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
+    eprintln!(
+        "  {BOLD}npcsh-rs{RESET} v{} — NPC Operating System Shell",
+        env!("CARGO_PKG_VERSION")
+    );
+    eprintln!(
+        "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",
+        s.total_processes, s.jinx_count
+    );
     eprintln!();
 
     eprint!("  {BOLD}Agents:{RESET} ");
-    let names: Vec<String> = kernel.ps().iter().map(|p| format!("{CYAN}@{}{RESET}", p.npc.name)).collect();
+    let names: Vec<String> = kernel
+        .ps()
+        .iter()
+        .map(|p| format!("{CYAN}@{}{RESET}", p.npc.name))
+        .collect();
     eprintln!("{}", names.join("  "));
 
     eprintln!("  {BOLD}Modes:{RESET}  {CYAN}/agent{RESET}  {CYAN}/chat{RESET}  {CYAN}/cmd{RESET}");
@@ -579,21 +611,34 @@ fn load_npcshrc() {
     }
 }
 
-const TERMINAL_EDITORS: &[&str] = &[
-    "vim", "nvim", "nano", "vi", "emacs", "less", "more", "man",
-];
+const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "nano", "vi", "emacs", "less", "more", "man"];
 
 const INTERACTIVE_COMMANDS: &[&str] = &[
-    "ipython", "python", "python3", "node", "irb", "ghci",
-    "mysql", "psql", "sqlite3", "redis-cli", "mongo",
-    "ssh", "telnet", "ftp", "sftp", "top", "htop", "watch", "r",
+    "ipython",
+    "python",
+    "python3",
+    "node",
+    "irb",
+    "ghci",
+    "mysql",
+    "psql",
+    "sqlite3",
+    "redis-cli",
+    "mongo",
+    "ssh",
+    "telnet",
+    "ftp",
+    "sftp",
+    "top",
+    "htop",
+    "watch",
+    "r",
 ];
 
 const SHELL_BUILTINS: &[&str] = &[
-    "cd", "pwd", "echo", "export", "source", "alias", "unalias",
-    "history", "set", "unset", "read", "eval", "exec", "exit",
-    "return", "shift", "trap", "wait", "jobs", "fg", "bg",
-    "kill", "ulimit", "umask", "type", "hash", "true", "false",
+    "cd", "pwd", "echo", "export", "source", "alias", "unalias", "history", "set", "unset", "read",
+    "eval", "exec", "exit", "return", "shift", "trap", "wait", "jobs", "fg", "bg", "kill",
+    "ulimit", "umask", "type", "hash", "true", "false",
 ];
 
 fn is_bash_command(input: &str) -> bool {
@@ -608,10 +653,7 @@ fn is_bash_command(input: &str) -> bool {
         return true;
     }
 
-    if let Ok(output) = std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-    {
+    if let Ok(output) = std::process::Command::new("which").arg(cmd).output() {
         return output.status.success();
     }
 
