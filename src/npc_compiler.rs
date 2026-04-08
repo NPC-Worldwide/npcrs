@@ -303,6 +303,10 @@ impl NPC {
             messages,
             tools,
             self.api_url.as_deref(),
+            None,
+            None,
+            false,
+            None,
         )
         .await
     }
@@ -321,25 +325,35 @@ impl NPC {
             .unwrap_or_else(|| "ollama".to_string())
     }
 
+    /// Mirrors npcpy NPC.get_llm_response — full signature.
     pub async fn get_llm_response(
         &self,
-        prompt: &str,
+        request: &str,
+        jinxes: Option<&HashMap<String, Jinx>>,
+        tools: Option<&[ToolDef]>,
         messages: Option<&[Message]>,
-        context: Option<&str>,
+        auto_process_tool_calls: bool,
+        use_core_tools: bool,
         format: Option<&str>,
+        context: Option<&str>,
         stream: bool,
+        images: Option<&[String]>,
     ) -> Result<crate::llm_funcs::LlmResponseResult> {
+        // TODO: jinxes, auto_process_tool_calls, use_core_tools are accepted
+        // for signature parity but not yet fully wired (tool routing is in kernel)
+        let _ = (jinxes, auto_process_tool_calls, use_core_tools);
         crate::llm_funcs::get_llm_response_ext(
-            prompt,
+            request,
             Some(self),
             None,
             None,
-            None,
+            tools,
             messages.unwrap_or(&[]),
             None,
             format,
             context,
             stream,
+            images,
         )
         .await
     }
@@ -458,7 +472,7 @@ impl NPC {
             problem
         );
         let result = self
-            .get_llm_response(&prompt, None, None, None, false)
+            .get_llm_response(&prompt, None, None, None, false, false, None, None, false, None)
             .await?;
         Ok(result.response.unwrap_or_default())
     }
@@ -469,7 +483,7 @@ impl NPC {
             language, task
         );
         let result = self
-            .get_llm_response(&prompt, None, None, None, false)
+            .get_llm_response(&prompt, None, None, None, false, false, None, None, false, None)
             .await?;
         Ok(result.response.unwrap_or_default())
     }
@@ -719,6 +733,7 @@ impl NPC {
             Some("json"),
             None,
             false,
+            None,
         )
         .await?;
         Ok(result
@@ -781,6 +796,7 @@ impl NPC {
             Some("json"),
             None,
             false,
+            None,
         )
         .await?;
         Ok(result
@@ -823,6 +839,7 @@ impl NPC {
             Some("json"),
             None,
             false,
+            None,
         )
         .await?;
         Ok(result
@@ -2401,6 +2418,10 @@ impl Agent {
                 &msgs,
                 tools,
                 self.npc.api_url.as_deref(),
+                None,
+                None,
+                false,
+                None,
             )
             .await?;
 

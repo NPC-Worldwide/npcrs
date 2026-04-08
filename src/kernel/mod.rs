@@ -269,6 +269,10 @@ impl Kernel {
             &messages,
             None,
             process.npc.api_url.as_deref(),
+            None,
+            None,
+            false,
+            None,
         )
         .await?;
 
@@ -433,6 +437,10 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 &messages,
                 tools,
                 api_url.as_deref(),
+                None,
+                None,
+                false,
+                None,
             )
             .await?;
 
