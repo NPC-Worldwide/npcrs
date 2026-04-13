@@ -6,7 +6,6 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::sampling::LlamaSampler;
-use llama_cpp_2::token::data_array::LlamaTokenDataArray;
 use std::sync::OnceLock;
 
 static BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
@@ -81,6 +80,7 @@ pub fn get_llamacpp_response(
             .map_err(|e| NpcError::LlmRequest(format!("Decode error: {:?}", e)))?;
     }
 
+    #[allow(deprecated)]
     let output_text: String = output_tokens
         .iter()
         .filter_map(|t| {

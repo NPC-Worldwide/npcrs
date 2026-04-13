@@ -5,7 +5,7 @@ use std::ptr;
 use crate::memory::CommandHistory;
 use crate::npc_compiler::NPC;
 use crate::npc_compiler::Team;
-use crate::shell::{ShellMode, ShellState};
+use crate::shell::ShellState;
 
 fn to_c_string(s: &str) -> *mut c_char {
     CString::new(s).unwrap_or_default().into_raw()

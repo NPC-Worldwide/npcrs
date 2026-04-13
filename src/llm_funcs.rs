@@ -1,7 +1,7 @@
 use crate::error::{NpcError, Result};
 #[allow(unused_imports)]
 use crate::r#gen::{LlmResponse, Message, ToolCall, ToolDef};
-use crate::npc_compiler::{Jinx, JinxInput, NPC};
+use crate::npc_compiler::{Jinx, NPC};
 use std::collections::HashMap;
 
 pub struct LlmResponseResult {

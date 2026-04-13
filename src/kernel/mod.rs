@@ -105,7 +105,7 @@ for line in sys.stdin:
             .stdout
             .take()
             .ok_or_else(|| NpcError::Other("No stdout on daemon".into()))?;
-        let mut stderr = child
+        let stderr = child
             .stderr
             .take()
             .ok_or_else(|| NpcError::Other("No stderr on daemon".into()))?;
@@ -188,7 +188,7 @@ impl Kernel {
 
     pub fn spawn(&mut self, npc: NPC, ppid: Pid, capabilities: Capabilities) -> Pid {
         let pid = self.next_pid.fetch_add(1, Ordering::Relaxed);
-        let mut process = Process::spawn(pid, ppid, npc, capabilities);
+        let process = Process::spawn(pid, ppid, npc, capabilities);
 
         tracing::info!(
             "kernel: spawned pid:{} ({}) ppid:{}",
@@ -301,7 +301,7 @@ impl Kernel {
         use crate::r#gen::cost::calculate_cost;
         use crate::r#gen::sanitize::sanitize_messages;
 
-        let (model, provider, system, api_url, npc_name, active_npc, mut tool_defs, executors) = {
+        let (model, provider, system, api_url, npc_name, active_npc, tool_defs, executors) = {
             let process = self
                 .processes
                 .get_mut(&pid)

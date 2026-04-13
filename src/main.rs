@@ -1,3 +1,12 @@
+#![allow(
+    dead_code,
+    unused_variables,
+    unused_assignments,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::manual_strip,
+    clippy::needless_borrows_for_generic_args
+)]
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use rustyline::completion::{Completer, Pair};

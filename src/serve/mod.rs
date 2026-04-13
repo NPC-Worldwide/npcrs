@@ -1,6 +1,5 @@
 use crate::error::{NpcError, Result};
 use crate::r#gen::Message;
-use crate::npc_compiler;
 use crate::npc_compiler::Team;
 use axum::{
     Router,

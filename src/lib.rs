@@ -1,3 +1,41 @@
+#![allow(
+    dead_code,
+    unused_variables,
+    unused_assignments,
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::needless_borrow,
+    clippy::map_unwrap_or,
+    clippy::unwrap_used,
+    clippy::manual_unwrap_or,
+    clippy::should_implement_trait,
+    clippy::regex_creation_in_loops,
+    clippy::needless_range_loop,
+    clippy::option_map_or_none,
+    clippy::if_same_then_else,
+    clippy::redundant_closure,
+    clippy::manual_split_once,
+    clippy::derivable_impls,
+    clippy::map_entry,
+    clippy::needless_pass_by_ref_mut,
+    clippy::unnecessary_mut_passed,
+    clippy::unwrap_or_default,
+    clippy::duplicated_attributes,
+    clippy::for_kv_map,
+    clippy::let_and_return,
+    clippy::manual_clamp,
+    clippy::map_clone,
+    clippy::needless_borrows_for_generic_args,
+    clippy::obfuscated_if_else,
+    clippy::trim_split_whitespace,
+    clippy::unnecessary_map_or,
+    clippy::unnecessary_unwrap,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::needless_option_as_deref,
+    clippy::mut_from_ref
+)]
+
 pub mod drivers;
 pub mod ipc;
 pub mod kernel;

@@ -1,5 +1,4 @@
 use crate::error::{NpcError, Result};
-use std::collections::HashMap;
 
 pub async fn fit_model(
     data_json: &str,

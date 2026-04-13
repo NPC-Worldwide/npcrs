@@ -354,7 +354,7 @@ pub fn kg_add_fact(
     source_text: Option<&str>,
     fact_type: Option<&str>,
 ) -> NodeIndex {
-    let mut node_idx = kg.add_entity(statement, KgNodeType::Fact, source_text.unwrap_or(""));
+    let node_idx = kg.add_entity(statement, KgNodeType::Fact, source_text.unwrap_or(""));
     if let Some(ft) = fact_type {
         kg.graph[node_idx].metadata.insert("type".into(), ft.into());
     }

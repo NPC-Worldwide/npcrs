@@ -1,5 +1,5 @@
 use crate::error::{NpcError, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn write_file(path: &Path, content: &str, executable: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
