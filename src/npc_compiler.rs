@@ -472,7 +472,9 @@ impl NPC {
             problem
         );
         let result = self
-            .get_llm_response(&prompt, None, None, None, false, false, None, None, false, None)
+            .get_llm_response(
+                &prompt, None, None, None, false, false, None, None, false, None,
+            )
             .await?;
         Ok(result.response.unwrap_or_default())
     }
@@ -483,7 +485,9 @@ impl NPC {
             language, task
         );
         let result = self
-            .get_llm_response(&prompt, None, None, None, false, false, None, None, false, None)
+            .get_llm_response(
+                &prompt, None, None, None, false, false, None, None, false, None,
+            )
             .await?;
         Ok(result.response.unwrap_or_default())
     }

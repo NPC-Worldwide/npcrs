@@ -77,7 +77,11 @@ impl ShellState {
 
     /// Check permission for a tool call.
     /// Returns "allow", "deny", or "ask".
-    pub fn check_tool_permission(&mut self, tool_name: &str, args: &serde_json::Value) -> &'static str {
+    pub fn check_tool_permission(
+        &mut self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> &'static str {
         if is_safe_tool(tool_name) {
             return "allow";
         }
@@ -107,7 +111,13 @@ impl ShellState {
     }
 
     /// Grant or deny permission persistently and save to permissions.yaml.
-    pub fn save_permission(&mut self, tool_name: &str, args: &serde_json::Value, level: &str, scope: &str) {
+    pub fn save_permission(
+        &mut self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        level: &str,
+        scope: &str,
+    ) {
         let key = build_command_key(tool_name, args);
         self.permission_rules.insert(key.clone(), level.to_string());
 

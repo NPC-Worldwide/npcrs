@@ -31,7 +31,14 @@ pub async fn get_genai_response(
 ) -> Result<LlmResponse> {
     if provider == "ollama" {
         return get_ollama_response(
-            model, messages, tools, api_url_override, format, images, stream, think,
+            model,
+            messages,
+            tools,
+            api_url_override,
+            format,
+            images,
+            stream,
+            think,
         )
         .await;
     }
@@ -201,8 +208,9 @@ async fn get_ollama_response(
                 tcs.iter()
                     .map(|tc| {
                         // Normalize arguments: if stored as JSON string, parse to object
-                        let args = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        let args =
+                            serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                         serde_json::json!({
                             "function": {
                                 "name": tc.function.name,

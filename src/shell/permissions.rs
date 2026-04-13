@@ -87,10 +87,7 @@ pub fn load_permission_file(path: &str) -> HashMap<String, String> {
     let map = match &parsed {
         serde_yaml::Value::Mapping(m) => {
             // Check for nested "rules" key
-            let inner = m
-                .get("rules")
-                .and_then(|v| v.as_mapping())
-                .unwrap_or(m);
+            let inner = m.get("rules").and_then(|v| v.as_mapping()).unwrap_or(m);
             inner
         }
         _ => return HashMap::new(),
@@ -113,9 +110,19 @@ pub fn load_permission_file(path: &str) -> HashMap<String, String> {
 pub fn is_safe_tool(name: &str) -> bool {
     matches!(
         name,
-        "chat" | "help" | "stop" | "screenshot" | "ask_form"
-            | "config" | "switches" | "verbose" | "shh"
-            | "usage" | "lookback" | "reload" | "init"
+        "chat"
+            | "help"
+            | "stop"
+            | "screenshot"
+            | "ask_form"
+            | "config"
+            | "switches"
+            | "verbose"
+            | "shh"
+            | "usage"
+            | "lookback"
+            | "reload"
+            | "init"
     )
 }
 
