@@ -33,7 +33,8 @@
     clippy::unnecessary_unwrap,
     clippy::not_unsafe_ptr_arg_deref,
     clippy::needless_option_as_deref,
-    clippy::mut_from_ref
+    clippy::mut_from_ref,
+    clippy::needless_return
 )]
 
 pub mod drivers;
