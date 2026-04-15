@@ -58,6 +58,7 @@ fn test_jinx_to_tool_def() {
 }
 
 #[tokio::test]
+#[cfg(not(target_os = "windows"))]
 async fn test_bash_jinx_execution() {
     let mut jinx = Jinx {
         name: "test_echo".into(),
@@ -81,6 +82,7 @@ async fn test_bash_jinx_execution() {
 }
 
 #[tokio::test]
+#[cfg(not(target_os = "windows"))]
 async fn test_python_jinx_execution() {
     let jinx = Jinx {
         name: "test_py".into(),
