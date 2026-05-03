@@ -16,6 +16,8 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Cmd, CompletionType, Config, Editor, EventHandler, Helper, KeyEvent, Modifiers};
 use std::borrow::Cow;
+use tokio::sync::mpsc;
+use tokio::signal::unix::{signal, SignalKind};
 
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
@@ -169,6 +171,17 @@ async fn main() -> Result<()> {
         Ok(_) => tracing::info!("Loaded history from {}", history_path),
         Err(e) => tracing::info!("No existing history found or error loading: {}", e),
     }
+
+    // Set up Ctrl+C signal handler for interrupting LLM calls
+    let (interrupt_tx, mut interrupt_rx) = mpsc::channel::<()>(1);
+    let interrupt_tx_clone = interrupt_tx.clone();
+    tokio::spawn(async move {
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+        loop {
+            sigint.recv().await;
+            let _ = interrupt_tx_clone.send(()).await;
+        }
+    });
 
     let mut current_pid: u32 = 0;
     let mut mode = Mode::Agent;
@@ -494,24 +507,88 @@ async fn main() -> Result<()> {
                 if is_bash_command(&input) {
                     run_bash(&input).await;
                 } else {
-                    match kernel.exec(current_pid, &input).await {
-                        Ok(output) if !output.is_empty() => println!("{}", output),
-                        Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                        _ => {}
+                    // Wrap exec in cancellable task
+                    let exec_fut = kernel.exec(current_pid, &input);
+                    tokio::pin!(exec_fut);
+                    tokio::select! {
+                        result = &mut exec_fut => {
+                            match result {
+                                Ok(output) if !output.is_empty() => println!("{}", output),
+                                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
+                                _ => {}
+                            }
+                        }
+                        _ = interrupt_rx.recv() => {
+                            eprintln!("
+{YELLOW}Interrupted{RESET}");
+                            // Reset the interrupt channel
+                            let (tx, rx) = mpsc::channel::<()>(1);
+                            interrupt_rx = rx;
+                            let tx_clone = tx.clone();
+                            tokio::spawn(async move {
+                                let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+                                loop {
+                                    sigint.recv().await;
+                                    let _ = tx_clone.send(()).await;
+                                }
+                            });
+                        }
                     }
                 }
             }
-            Mode::Chat => match kernel.exec_chat(current_pid, &input).await {
-                Ok(output) if !output.is_empty() => println!("{}", output),
-                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                _ => {}
-            },
+            Mode::Chat => {
+                let exec_fut = kernel.exec_chat(current_pid, &input);
+                tokio::pin!(exec_fut);
+                tokio::select! {
+                    result = exec_fut => {
+                        match result {
+                            Ok(output) if !output.is_empty() => println!("{}", output),
+                            Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
+                            _ => {}
+                        }
+                    }
+                    _ = interrupt_rx.recv() => {
+                        eprintln!("
+{YELLOW}Interrupted{RESET}");
+                        let (tx, rx) = mpsc::channel::<()>(1);
+                        interrupt_rx = rx;
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+                            loop {
+                                sigint.recv().await;
+                                let _ = tx_clone.send(()).await;
+                            }
+                        });
+                    }
+                }
+            }
             Mode::Cmd => {
                 if !run_bash(&input).await {
-                    match kernel.exec(current_pid, &input).await {
-                        Ok(output) if !output.is_empty() => println!("{}", output),
-                        Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                        _ => {}
+                    let exec_fut = kernel.exec(current_pid, &input);
+                    tokio::pin!(exec_fut);
+                    tokio::select! {
+                        result = &mut exec_fut => {
+                            match result {
+                                Ok(output) if !output.is_empty() => println!("{}", output),
+                                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
+                                _ => {}
+                            }
+                        }
+                        _ = interrupt_rx.recv() => {
+                            eprintln!("
+{YELLOW}Interrupted{RESET}");
+                            let (tx, rx) = mpsc::channel::<()>(1);
+                            interrupt_rx = rx;
+                            let tx_clone = tx.clone();
+                            tokio::spawn(async move {
+                                let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+                                loop {
+                                    sigint.recv().await;
+                                    let _ = tx_clone.send(()).await;
+                                }
+                            });
+                        }
                     }
                 }
             }
