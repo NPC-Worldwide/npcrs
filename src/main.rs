@@ -5,7 +5,7 @@ use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
-use rustyline::{CompletionType, Config, Editor, Helper};
+use rustyline::{Cmd, CompletionType, Config, Editor, EventHandler, Helper, KeyEvent, Modifiers};
 use std::borrow::Cow;
 
 const CYAN: &str = "\x1b[36m";
@@ -148,7 +148,18 @@ async fn main() -> Result<()> {
     let history_path = shellexpand::tilde("~/.npcsh_history").to_string();
     let mut rl = Editor::with_config(config).unwrap();
     rl.set_helper(Some(helper));
-    let _ = rl.load_history(&history_path);
+    
+    // Bind Escape key to trigger interrupt (same as Ctrl+C)
+    rl.bind_sequence(
+        KeyEvent::new('', Modifiers::empty()),
+        EventHandler::Simple(Cmd::Interrupt),
+    );
+    
+    // Load existing history
+    match rl.load_history(&history_path) {
+        Ok(_) => tracing::info!("Loaded history from {}", history_path),
+        Err(e) => tracing::info!("No existing history found or error loading: {}", e),
+    }
 
     let mut current_pid: u32 = 0;
     let mut mode = Mode::Agent;
@@ -199,7 +210,10 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        rl.add_history_entry(&input).ok();
+        // Add to history (ignoring errors silently)
+        if !input.trim().is_empty() {
+            let _ = rl.add_history_entry(&input);
+        }
 
         let handled = match input.as_str() {
             "exit" | "quit" | "/quit" | "/exit" => break,
@@ -507,9 +521,12 @@ async fn main() -> Result<()> {
         }
     }
 
-    let _ = rl.save_history(&history_path);
-
-    eprintln!("\n{DIM}Kernel shutting down.{RESET}");
+    // Save history before shutdown
+    if let Err(e) = rl.save_history(&history_path) {
+        eprintln!("{DIM}Warning: Failed to save history: {e}{RESET}");
+    } else {
+        tracing::info!("History saved to {}", history_path);
+    }
     let s = kernel.stats();
     eprintln!(
         "{DIM}uptime: {}s | tokens: {} | cost: ${:.4}{RESET}",

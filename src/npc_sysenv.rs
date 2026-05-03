@@ -484,6 +484,7 @@ pub fn resolve_team_dir(team_path: Option<&str>) -> PathBuf {
     }
 }
 
+/// Run git command with output capture (non-interactive)
 fn git(args: &[&str], cwd: &Path) -> std::result::Result<String, String> {
     let output = std::process::Command::new("git")
         .args(args)
@@ -498,6 +499,22 @@ fn git(args: &[&str], cwd: &Path) -> std::result::Result<String, String> {
             .unwrap_or(stderr));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Run git command with inherited stdin/stdout (for interactive operations)
+fn git_interactive(args: &[&str], cwd: &Path) -> std::result::Result<(), String> {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .map_err(|e| format!("git failed: {}", e))?;
+    if !status.success() {
+        return Err(format!("git {} failed with exit code: {:?}", args[0], status.code()));
+    }
+    Ok(())
 }
 
 pub fn team_sync_status(
@@ -576,7 +593,9 @@ pub fn team_sync_pull(team_path: Option<&str>) -> std::result::Result<String, St
         return Err("No remote configured".into());
     }
     let branch = git(&["rev-parse", "--abbrev-ref", "HEAD"], &team_dir)?;
-    git(&["pull", "origin", &branch], &team_dir)
+    // Use interactive mode for pull to allow for credential prompts
+    git_interactive(&["pull", "origin", &branch], &team_dir)?;
+    Ok("Pull completed".into())
 }
 
 pub fn team_sync_commit(
@@ -589,7 +608,8 @@ pub fn team_sync_commit(
     let remote = git(&["remote"], &team_dir).unwrap_or_default();
     if !remote.is_empty() {
         let branch = git(&["rev-parse", "--abbrev-ref", "HEAD"], &team_dir)?;
-        git(&["push", "origin", &branch], &team_dir)?;
+        // Use interactive mode for push to allow for credential prompts
+        git_interactive(&["push", "origin", &branch], &team_dir)?;
     }
     Ok("Changes committed".into())
 }
