@@ -438,7 +438,10 @@ pub async fn execute_plan_command(
         crate::r#gen::Message::user(&prompt),
     ];
 
-    let response = crate::r#gen::get_genai_response(provider, model, &msgs, None, None).await?;
+    let response = crate::r#gen::get_genai_response(
+        provider, model, &msgs, None, None, None, None, false, None,
+    )
+    .await?;
 
     let response_text = response.message.content.unwrap_or_default();
     let clean_text = response_text

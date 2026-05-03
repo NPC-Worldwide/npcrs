@@ -222,7 +222,10 @@ Text:
     );
 
     let messages = vec![crate::r#gen::Message::user(prompt)];
-    let response = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+    let response = crate::r#gen::get_genai_response(
+        provider, model, &messages, None, None, None, None, false, None,
+    )
+    .await?;
 
     let content = response.message.content.unwrap_or_default();
 
@@ -267,7 +270,10 @@ New text:
     );
 
     let messages = vec![crate::r#gen::Message::user(prompt)];
-    let response = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+    let response = crate::r#gen::get_genai_response(
+        provider, model, &messages, None, None, None, None, false, None,
+    )
+    .await?;
 
     let content = response.message.content.unwrap_or_default();
 
@@ -348,7 +354,7 @@ pub fn kg_add_fact(
     source_text: Option<&str>,
     fact_type: Option<&str>,
 ) -> NodeIndex {
-    let mut node_idx = kg.add_entity(statement, KgNodeType::Fact, source_text.unwrap_or(""));
+    let node_idx = kg.add_entity(statement, KgNodeType::Fact, source_text.unwrap_or(""));
     if let Some(ft) = fact_type {
         kg.graph[node_idx].metadata.insert("type".into(), ft.into());
     }
@@ -463,7 +469,10 @@ pub async fn kg_sleep_process(kg: &mut KnowledgeGraph, model: &str, provider: &s
             &all_facts[..all_facts.len().min(10)]
         );
         let messages = vec![crate::r#gen::Message::user(&prompt)];
-        let resp = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+        let resp = crate::r#gen::get_genai_response(
+            provider, model, &messages, None, None, None, None, false, None,
+        )
+        .await?;
         let content = resp.message.content.unwrap_or_default();
         let json_str = extract_json_from_response(&content);
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
@@ -482,7 +491,10 @@ pub async fn kg_sleep_process(kg: &mut KnowledgeGraph, model: &str, provider: &s
             fact_to_deepen_content
         );
         let messages = vec![crate::r#gen::Message::user(&prompt)];
-        let resp = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+        let resp = crate::r#gen::get_genai_response(
+            provider, model, &messages, None, None, None, None, false, None,
+        )
+        .await?;
         let content = resp.message.content.unwrap_or_default();
         let json_str = extract_json_from_response(&content);
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
@@ -521,7 +533,10 @@ pub async fn kg_dream_process(
         seed_names
     );
     let messages = vec![crate::r#gen::Message::user(&prompt)];
-    let resp = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await?;
+    let resp = crate::r#gen::get_genai_response(
+        provider, model, &messages, None, None, None, None, false, None,
+    )
+    .await?;
     let content = resp.message.content.unwrap_or_default();
     let json_str = extract_json_from_response(&content);
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {

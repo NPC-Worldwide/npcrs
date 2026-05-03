@@ -1,7 +1,7 @@
 use crate::error::{NpcError, Result};
 #[allow(unused_imports)]
 use crate::r#gen::{LlmResponse, Message, ToolCall, ToolDef};
-use crate::npc_compiler::{Jinx, JinxInput, NPC};
+use crate::npc_compiler::{Jinx, NPC};
 use std::collections::HashMap;
 
 pub struct LlmResponseResult {
@@ -97,10 +97,12 @@ pub async fn get_llm_response(
         None,
         None,
         false,
+        None,
     )
     .await
 }
 
+/// Mirrors npcpy llm_funcs.get_llm_response — full param set.
 pub async fn get_llm_response_ext(
     input: &str,
     npc: Option<&NPC>,
@@ -111,7 +113,8 @@ pub async fn get_llm_response_ext(
     team_context: Option<&str>,
     format: Option<&str>,
     context: Option<&str>,
-    _stream: bool,
+    stream: bool,
+    images: Option<&[String]>,
 ) -> Result<LlmResponseResult> {
     let (resolved_model, resolved_provider) = resolve_model_provider(npc, model, provider);
 
@@ -177,6 +180,10 @@ pub async fn get_llm_response_ext(
                     &clean,
                     tools,
                     npc.and_then(|n| n.api_url.as_deref()),
+                    format,
+                    images,
+                    stream,
+                    None,
                 )
                 .await?
             }
@@ -194,6 +201,10 @@ pub async fn get_llm_response_ext(
                 &clean,
                 tools,
                 npc.and_then(|n| n.api_url.as_deref()),
+                format,
+                images,
+                stream,
+                None,
             )
             .await?
         }
@@ -270,6 +281,7 @@ async fn llm_call(
         None,
         context,
         false,
+        None,
     )
     .await?;
     Ok(result.response.unwrap_or_default())
@@ -293,6 +305,7 @@ async fn llm_call_json(
         Some("json"),
         context,
         false,
+        None,
     )
     .await?;
     if let Some(json) = result.response_json {
@@ -817,6 +830,7 @@ pub async fn check_llm_command(
             None,
             context,
             false,
+            None,
         )
         .await?;
         messages.push(Message::user(command));

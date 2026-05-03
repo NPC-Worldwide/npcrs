@@ -29,7 +29,10 @@ pub async fn infer_matrix(
         }
         messages.push(Message::user(prompt));
 
-        let result = crate::r#gen::get_genai_response(provider, model, &messages, None, None).await;
+        let result = crate::r#gen::get_genai_response(
+            provider, model, &messages, None, None, None, None, false, None,
+        )
+        .await;
 
         let elapsed = start.elapsed().as_millis() as u64;
 

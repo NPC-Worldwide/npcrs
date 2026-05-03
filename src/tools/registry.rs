@@ -41,15 +41,44 @@ impl ToolRegistry {
     }
 
     pub async fn process_tool_calls(&self, tool_calls: &[ToolCall]) -> Vec<Message> {
+        self.process_tool_calls_checked(tool_calls, None).await
+    }
+
+    /// Process tool calls with optional permission checking via ShellState.
+    pub async fn process_tool_calls_checked(
+        &self,
+        tool_calls: &[ToolCall],
+        mut state: Option<&mut crate::shell::ShellState>,
+    ) -> Vec<Message> {
         let mut results = Vec::with_capacity(tool_calls.len());
 
         for tc in tool_calls {
             let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-            let result_text = match self.execute(&tc.function.name, args).await {
-                Ok(output) => output,
-                Err(e) => format!("Error executing tool '{}': {}", tc.function.name, e),
+            // Permission check
+            let decision = if let Some(s) = state.as_deref_mut() {
+                s.check_tool_permission(&tc.function.name, &args)
+            } else {
+                "allow"
+            };
+
+            let result_text = match decision {
+                "deny" => format!(
+                    "EPERM: Tool '{}' is denied by permission settings.",
+                    tc.function.name
+                ),
+                "ask" => {
+                    // Without an interactive terminal here, default to deny and surface for caller
+                    format!(
+                        "EPERM: Tool '{}' requires user approval (permission=ask).",
+                        tc.function.name
+                    )
+                }
+                _ => match self.execute(&tc.function.name, args).await {
+                    Ok(output) => output,
+                    Err(e) => format!("Error executing tool '{}': {}", tc.function.name, e),
+                },
             };
 
             results.push(Message::tool_result(&tc.id, result_text));

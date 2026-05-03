@@ -5,7 +5,7 @@ use std::ptr;
 use crate::memory::CommandHistory;
 use crate::npc_compiler::NPC;
 use crate::npc_compiler::Team;
-use crate::shell::{ShellMode, ShellState};
+use crate::shell::ShellState;
 
 fn to_c_string(s: &str) -> *mut c_char {
     CString::new(s).unwrap_or_default().into_raw()
@@ -164,16 +164,14 @@ pub extern "C" fn npcrs_shell_create(team: *mut Team, db_path: *const c_char) ->
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
 
-    let state = ShellState {
+    let mut state = ShellState::new(
         npc,
         team,
         history,
-        messages: Vec::new(),
-        conversation_id: crate::memory::start_new_conversation(),
-        current_mode: ShellMode::Agent,
-        current_path: cwd,
-        stream_output: false,
-    };
+        crate::memory::start_new_conversation(),
+        cwd,
+    );
+    state.stream_output = false;
 
     Box::into_raw(Box::new(state))
 }

@@ -1,6 +1,5 @@
 use crate::error::{NpcError, Result};
 use std::collections::HashMap;
-use std::path::Path;
 
 pub fn discover_team_path(explicit: Option<&str>) -> String {
     if let Some(p) = explicit {

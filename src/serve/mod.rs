@@ -1,6 +1,5 @@
 use crate::error::{NpcError, Result};
 use crate::r#gen::Message;
-use crate::npc_compiler;
 use crate::npc_compiler::Team;
 use axum::{
     Router,
@@ -201,6 +200,10 @@ async fn chat(
             &messages,
             None,
             npc.api_url.as_deref(),
+            None,
+            None,
+            false,
+            None,
         )
         .await
         {
@@ -638,6 +641,7 @@ async fn extract_memories(
             Some("json"),
             None,
             false,
+            None,
         )
         .await
         {

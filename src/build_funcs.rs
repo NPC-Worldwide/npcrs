@@ -1,4 +1,4 @@
-use crate::error::{NpcError, Result};
+use crate::error::Result;
 use std::collections::HashMap;
 use std::path::Path;
 

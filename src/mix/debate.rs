@@ -63,6 +63,10 @@ pub async fn debate(npcs: &[&NPC], topic: &str, rounds: usize) -> Result<DebateR
                 &messages,
                 None,
                 npc.api_url.as_deref(),
+                None,
+                None,
+                false,
+                None,
             )
             .await?;
 
@@ -120,6 +124,10 @@ async fn generate_summary(
         &messages,
         None,
         summarizer.api_url.as_deref(),
+        None,
+        None,
+        false,
+        None,
     )
     .await?;
 
