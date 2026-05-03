@@ -102,8 +102,10 @@ pub async fn get_genai_response(
         req = req.with_tools(genai_tools);
     }
 
+    // genai expects provider::model format (e.g., "moonshot::kimi-k2.5")
+    let genai_model = format!("{}::{}", provider, model);
     let genai_resp = client
-        .exec_chat(model, req, None)
+        .exec_chat(&genai_model, req, None)
         .await
         .map_err(|e| NpcError::LlmRequest(format!("{}", e)))?;
 
