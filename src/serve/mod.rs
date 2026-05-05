@@ -642,6 +642,8 @@ async fn extract_memories(
             None,
             false,
             None,
+            None,
+            None,
         )
         .await
         {
