@@ -16,8 +16,8 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Cmd, CompletionType, Config, Editor, EventHandler, Helper, KeyEvent, Modifiers};
 use std::borrow::Cow;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
-use tokio::signal::unix::{signal, SignalKind};
 
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
@@ -159,13 +159,13 @@ async fn main() -> Result<()> {
     let history_path = shellexpand::tilde("~/.npcsh_history").to_string();
     let mut rl = Editor::with_config(config).unwrap();
     rl.set_helper(Some(helper));
-    
+
     // Bind Escape key to trigger interrupt (same as Ctrl+C)
     rl.bind_sequence(
         KeyEvent::new('', Modifiers::empty()),
         EventHandler::Simple(Cmd::Interrupt),
     );
-    
+
     // Load existing history
     match rl.load_history(&history_path) {
         Ok(_) => tracing::info!("Loaded history from {}", history_path),
@@ -520,7 +520,7 @@ async fn main() -> Result<()> {
                         }
                         _ = interrupt_rx.recv() => {
                             eprintln!("
-{YELLOW}Interrupted{RESET}");
+                    {YELLOW}Interrupted{RESET}");
                             // Reset the interrupt channel
                             let (tx, rx) = mpsc::channel::<()>(1);
                             interrupt_rx = rx;
@@ -549,7 +549,7 @@ async fn main() -> Result<()> {
                     }
                     _ = interrupt_rx.recv() => {
                         eprintln!("
-{YELLOW}Interrupted{RESET}");
+                {YELLOW}Interrupted{RESET}");
                         let (tx, rx) = mpsc::channel::<()>(1);
                         interrupt_rx = rx;
                         let tx_clone = tx.clone();
@@ -577,7 +577,7 @@ async fn main() -> Result<()> {
                         }
                         _ = interrupt_rx.recv() => {
                             eprintln!("
-{YELLOW}Interrupted{RESET}");
+                    {YELLOW}Interrupted{RESET}");
                             let (tx, rx) = mpsc::channel::<()>(1);
                             interrupt_rx = rx;
                             let tx_clone = tx.clone();

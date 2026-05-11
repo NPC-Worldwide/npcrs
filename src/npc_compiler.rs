@@ -354,6 +354,8 @@ impl NPC {
             context,
             stream,
             images,
+            None,
+            None,
         )
         .await
     }
@@ -738,6 +740,8 @@ impl NPC {
             None,
             false,
             None,
+            None,
+            None,
         )
         .await?;
         Ok(result
@@ -801,6 +805,8 @@ impl NPC {
             None,
             false,
             None,
+            None,
+            None,
         )
         .await?;
         Ok(result
@@ -843,6 +849,8 @@ impl NPC {
             Some("json"),
             None,
             false,
+            None,
+            None,
             None,
         )
         .await?;
