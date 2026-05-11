@@ -23,8 +23,16 @@ pub struct LlmResponseResult {
 // ---------------------------------------------------------------------------
 
 pub const CLI_PROVIDERS: &[&str] = &[
-    "opencode", "claude_code", "claude", "codex", "amp",
-    "gemini_cli", "aider", "kimi", "kimi_code", "kilo",
+    "opencode",
+    "claude_code",
+    "claude",
+    "codex",
+    "amp",
+    "gemini_cli",
+    "aider",
+    "kimi",
+    "kimi_code",
+    "kilo",
 ];
 
 const TUI_PROVIDERS: &[&str] = &["opencode", "kilo"];
@@ -50,10 +58,14 @@ fn build_cli_cmd(
         "claude_code" | "claude" => {
             let sid = session_id.map(str::to_owned).unwrap_or_else(|| uuid_v4());
             let mut cmd = vec![
-                "claude".to_string(), "-p".to_string(), prompt.to_string(),
-                "--output-format".to_string(), "stream-json".to_string(),
+                "claude".to_string(),
+                "-p".to_string(),
+                prompt.to_string(),
+                "--output-format".to_string(),
+                "stream-json".to_string(),
                 "--verbose".to_string(),
-                "--session-id".to_string(), sid,
+                "--session-id".to_string(),
+                sid,
             ];
             if !model.is_empty() {
                 cmd.extend(["--model".to_string(), model.to_string()]);
@@ -66,51 +78,84 @@ fn build_cli_cmd(
         "opencode" => {
             let full = wrap_with_system(prompt, system_prompt, session_id);
             let mut cmd = vec![
-                "opencode".to_string(), "run".to_string(), full,
-                "--format".to_string(), "json".to_string(),
+                "opencode".to_string(),
+                "run".to_string(),
+                full,
+                "--format".to_string(),
+                "json".to_string(),
             ];
-            if !model.is_empty() { cmd.extend(["-m".to_string(), model.to_string()]); }
-            if let Some(sid) = session_id { cmd.extend(["-s".to_string(), sid.to_string()]); }
+            if !model.is_empty() {
+                cmd.extend(["-m".to_string(), model.to_string()]);
+            }
+            if let Some(sid) = session_id {
+                cmd.extend(["-s".to_string(), sid.to_string()]);
+            }
             Some(cmd)
         }
         "codex" => {
             let full = wrap_with_system(prompt, system_prompt, session_id);
             let mut cmd = match session_id {
                 Some("last") => vec![
-                    "codex".to_string(), "exec".to_string(), "resume".to_string(),
-                    "--last".to_string(), "--json".to_string(), full,
+                    "codex".to_string(),
+                    "exec".to_string(),
+                    "resume".to_string(),
+                    "--last".to_string(),
+                    "--json".to_string(),
+                    full,
                 ],
                 Some(sid) => vec![
-                    "codex".to_string(), "exec".to_string(), "resume".to_string(),
-                    sid.to_string(), "--json".to_string(), full,
+                    "codex".to_string(),
+                    "exec".to_string(),
+                    "resume".to_string(),
+                    sid.to_string(),
+                    "--json".to_string(),
+                    full,
                 ],
                 None => vec![
-                    "codex".to_string(), "exec".to_string(),
-                    "--json".to_string(), full,
+                    "codex".to_string(),
+                    "exec".to_string(),
+                    "--json".to_string(),
+                    full,
                 ],
             };
-            if !model.is_empty() { cmd.extend(["--model".to_string(), model.to_string()]); }
+            if !model.is_empty() {
+                cmd.extend(["--model".to_string(), model.to_string()]);
+            }
             Some(cmd)
         }
         "kimi" | "kimi_code" => {
             let full = wrap_with_system(prompt, system_prompt, session_id);
             let mut cmd = vec![
-                "kimi".to_string(), "--print".to_string(),
-                "--output-format".to_string(), "text".to_string(),
-                "-p".to_string(), full,
+                "kimi".to_string(),
+                "--print".to_string(),
+                "--output-format".to_string(),
+                "text".to_string(),
+                "-p".to_string(),
+                full,
             ];
-            if !model.is_empty() { cmd.extend(["-m".to_string(), model.to_string()]); }
-            if let Some(sid) = session_id { cmd.extend(["-S".to_string(), sid.to_string()]); }
+            if !model.is_empty() {
+                cmd.extend(["-m".to_string(), model.to_string()]);
+            }
+            if let Some(sid) = session_id {
+                cmd.extend(["-S".to_string(), sid.to_string()]);
+            }
             Some(cmd)
         }
         "kilo" => {
             let full = wrap_with_system(prompt, system_prompt, session_id);
             let mut cmd = vec![
-                "kilo".to_string(), "run".to_string(), full,
-                "--format".to_string(), "json".to_string(),
+                "kilo".to_string(),
+                "run".to_string(),
+                full,
+                "--format".to_string(),
+                "json".to_string(),
             ];
-            if !model.is_empty() { cmd.extend(["-m".to_string(), model.to_string()]); }
-            if let Some(sid) = session_id { cmd.extend(["-s".to_string(), sid.to_string()]); }
+            if !model.is_empty() {
+                cmd.extend(["-m".to_string(), model.to_string()]);
+            }
+            if let Some(sid) = session_id {
+                cmd.extend(["-s".to_string(), sid.to_string()]);
+            }
             Some(cmd)
         }
         "gemini_cli" => {
@@ -124,8 +169,10 @@ fn build_cli_cmd(
         "aider" => {
             let full = wrap_with_system(prompt, system_prompt, session_id);
             Some(vec![
-                "aider".to_string(), "--message".to_string(),
-                full, "--no-pretty".to_string(),
+                "aider".to_string(),
+                "--message".to_string(),
+                full,
+                "--no-pretty".to_string(),
             ])
         }
         _ => None,
@@ -138,7 +185,14 @@ fn uuid_v4() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
-    format!("{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}", t, t >> 16, t & 0x0fff, 0x8000 | (t & 0x3fff), t as u64)
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        t,
+        t >> 16,
+        t & 0x0fff,
+        0x8000 | (t & 0x3fff),
+        t as u64
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +235,9 @@ impl ClaudeStreamParser {
 
     fn feed(&mut self, line: &str) -> String {
         let stripped = line.trim();
-        if stripped.is_empty() { return String::new(); }
+        if stripped.is_empty() {
+            return String::new();
+        }
         let ev: serde_json::Value = match serde_json::from_str(stripped) {
             Ok(v) => v,
             Err(_) => return String::new(),
@@ -197,7 +253,9 @@ impl ClaudeStreamParser {
                         }
                     }
                 }
-                if new_text.is_empty() { return String::new(); }
+                if new_text.is_empty() {
+                    return String::new();
+                }
                 let delta = if new_text.starts_with(self.last_text.as_str()) {
                     new_text[self.last_text.len()..].to_string()
                 } else {
@@ -219,8 +277,10 @@ impl ClaudeStreamParser {
     }
 
     fn finalize(self) -> ParserResult {
-        let usage = (self.input > 0 || self.output > 0)
-            .then(|| UsageInfo { input_tokens: self.input, output_tokens: self.output });
+        let usage = (self.input > 0 || self.output > 0).then_some(UsageInfo {
+            input_tokens: self.input,
+            output_tokens: self.output,
+        });
         ParserResult {
             text: self.final_text,
             usage,
@@ -241,12 +301,19 @@ struct OpencodeStreamParser {
 
 impl OpencodeStreamParser {
     fn new() -> Self {
-        Self { parts: Vec::new(), input: 0, output: 0, cost: 0.0 }
+        Self {
+            parts: Vec::new(),
+            input: 0,
+            output: 0,
+            cost: 0.0,
+        }
     }
 
     fn feed(&mut self, line: &str) -> String {
         let stripped = line.trim();
-        if stripped.is_empty() { return String::new(); }
+        if stripped.is_empty() {
+            return String::new();
+        }
         let ev: serde_json::Value = match serde_json::from_str(stripped) {
             Ok(v) => v,
             Err(_) => return String::new(),
@@ -273,8 +340,10 @@ impl OpencodeStreamParser {
     }
 
     fn finalize(self) -> ParserResult {
-        let usage = (self.input > 0 || self.output > 0)
-            .then(|| UsageInfo { input_tokens: self.input, output_tokens: self.output });
+        let usage = (self.input > 0 || self.output > 0).then_some(UsageInfo {
+            input_tokens: self.input,
+            output_tokens: self.output,
+        });
         ParserResult {
             text: self.parts.join(""),
             usage,
@@ -298,12 +367,19 @@ struct CodexStreamParser {
 
 impl CodexStreamParser {
     fn new() -> Self {
-        Self { parts: Vec::new(), input: 0, output: 0, thread_id: None }
+        Self {
+            parts: Vec::new(),
+            input: 0,
+            output: 0,
+            thread_id: None,
+        }
     }
 
     fn feed(&mut self, line: &str) -> String {
         let stripped = line.trim();
-        if stripped.is_empty() { return String::new(); }
+        if stripped.is_empty() {
+            return String::new();
+        }
         let ev: serde_json::Value = match serde_json::from_str(stripped) {
             Ok(v) => v,
             Err(_) => return String::new(),
@@ -333,8 +409,10 @@ impl CodexStreamParser {
     }
 
     fn finalize(self) -> ParserResult {
-        let usage = (self.input > 0 || self.output > 0)
-            .then(|| UsageInfo { input_tokens: self.input, output_tokens: self.output });
+        let usage = (self.input > 0 || self.output > 0).then_some(UsageInfo {
+            input_tokens: self.input,
+            output_tokens: self.output,
+        });
         ParserResult {
             text: self.parts.join(""),
             usage,
@@ -389,28 +467,28 @@ impl CliStreamParser {
     fn for_provider(provider: &str) -> Option<Self> {
         match provider {
             "claude" | "claude_code" => Some(Self::Claude(ClaudeStreamParser::new())),
-            "opencode" | "kilo"      => Some(Self::Opencode(OpencodeStreamParser::new())),
-            "codex"                  => Some(Self::Codex(CodexStreamParser::new())),
-            "kimi" | "kimi_code"     => Some(Self::Kimi(KimiStreamParser::new())),
+            "opencode" | "kilo" => Some(Self::Opencode(OpencodeStreamParser::new())),
+            "codex" => Some(Self::Codex(CodexStreamParser::new())),
+            "kimi" | "kimi_code" => Some(Self::Kimi(KimiStreamParser::new())),
             _ => None,
         }
     }
 
     fn feed(&mut self, line: &str) -> String {
         match self {
-            Self::Claude(p)   => p.feed(line),
+            Self::Claude(p) => p.feed(line),
             Self::Opencode(p) => p.feed(line),
-            Self::Codex(p)    => p.feed(line),
-            Self::Kimi(p)     => p.feed(line),
+            Self::Codex(p) => p.feed(line),
+            Self::Kimi(p) => p.feed(line),
         }
     }
 
     fn finalize(self) -> ParserResult {
         match self {
-            Self::Claude(p)   => p.finalize(),
+            Self::Claude(p) => p.finalize(),
             Self::Opencode(p) => p.finalize(),
-            Self::Codex(p)    => p.finalize(),
-            Self::Kimi(p)     => p.finalize(),
+            Self::Codex(p) => p.finalize(),
+            Self::Kimi(p) => p.finalize(),
         }
     }
 
@@ -431,11 +509,13 @@ fn resolve_session_id(
 ) -> Option<String> {
     match provider {
         "claude" | "claude_code" => pre_assigned_sid,
-        "opencode"               => fetch_opencode_session_id(),
-        "kilo"                   => fetch_kilo_session_id(),
-        "codex"                  => parser_result.parsed_session_id.clone()
-                                        .or_else(|| Some("last".to_string())),
-        "kimi" | "kimi_code"     => fetch_kimi_session_id(),
+        "opencode" => fetch_opencode_session_id(),
+        "kilo" => fetch_kilo_session_id(),
+        "codex" => parser_result
+            .parsed_session_id
+            .clone()
+            .or_else(|| Some("last".to_string())),
+        "kimi" | "kimi_code" => fetch_kimi_session_id(),
         _ => None,
     }
 }
@@ -460,8 +540,10 @@ fn parse_claude_output(raw: &str) -> (String, Option<UsageInfo>, f64) {
         let input = data["usage"]["input_tokens"].as_u64().unwrap_or(0);
         let output = data["usage"]["output_tokens"].as_u64().unwrap_or(0);
         let cost = data["total_cost_usd"].as_f64().unwrap_or(0.0);
-        let usage = (input > 0 || output > 0)
-            .then(|| UsageInfo { input_tokens: input, output_tokens: output });
+        let usage = (input > 0 || output > 0).then_some(UsageInfo {
+            input_tokens: input,
+            output_tokens: output,
+        });
         return (text, usage, cost);
     }
     (r.text, r.usage, r.cost)
@@ -487,11 +569,15 @@ fn parse_codex_output(raw: &str) -> (String, Option<UsageInfo>, Option<String>) 
 
 fn fetch_opencode_session_id() -> Option<String> {
     let out = std::process::Command::new("opencode")
-        .args(["session", "list"]).output().ok()?;
+        .args(["session", "list"])
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         if let Some(first) = line.split_whitespace().next() {
-            if first.starts_with("ses_") { return Some(first.to_string()); }
+            if first.starts_with("ses_") {
+                return Some(first.to_string());
+            }
         }
     }
     None
@@ -499,11 +585,15 @@ fn fetch_opencode_session_id() -> Option<String> {
 
 fn fetch_kilo_session_id() -> Option<String> {
     let out = std::process::Command::new("kilo")
-        .args(["session", "list"]).output().ok()?;
+        .args(["session", "list"])
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         if let Some(first) = line.split_whitespace().next() {
-            if first.starts_with("ses_") { return Some(first.to_string()); }
+            if first.starts_with("ses_") {
+                return Some(first.to_string());
+            }
         }
     }
     None
@@ -515,8 +605,14 @@ fn fetch_kimi_session_id() -> Option<String> {
     let digest = md5_hex(cwd_str.as_bytes());
     let base = dirs_base(&digest);
     let base_short = dirs_base(&digest[..8]);
-    let sessions_dir = if std::path::Path::new(&base).is_dir() { base } else { base_short };
-    if !std::path::Path::new(&sessions_dir).is_dir() { return None; }
+    let sessions_dir = if std::path::Path::new(&base).is_dir() {
+        base
+    } else {
+        base_short
+    };
+    if !std::path::Path::new(&sessions_dir).is_dir() {
+        return None;
+    }
     let mut best: Option<(std::time::SystemTime, String)> = None;
     for entry in std::fs::read_dir(&sessions_dir).ok()?.flatten() {
         if entry.path().is_dir() {
@@ -540,12 +636,17 @@ fn dirs_base(hash: &str) -> String {
 
 fn md5_hex(data: &[u8]) -> String {
     let out = std::process::Command::new("python3")
-        .args(["-c", &format!(
-            "import hashlib,sys; sys.stdout.write(hashlib.md5({:?}.encode()).hexdigest())",
-            std::str::from_utf8(data).unwrap_or("")
-        )])
+        .args([
+            "-c",
+            &format!(
+                "import hashlib,sys; sys.stdout.write(hashlib.md5({:?}.encode()).hexdigest())",
+                std::str::from_utf8(data).unwrap_or("")
+            ),
+        ])
         .output();
-    if let Ok(o) = out { return String::from_utf8_lossy(&o.stdout).to_string(); }
+    if let Ok(o) = out {
+        return String::from_utf8_lossy(&o.stdout).to_string();
+    }
     String::new()
 }
 
@@ -558,9 +659,12 @@ pub async fn run_cli_provider(
     _npc_name: &str,
     stream: bool,
 ) -> Option<LlmResponseResult> {
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-    use tokio::io::AsyncBufReadExt;
     use std::io::Write;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::io::AsyncBufReadExt;
 
     let cmd = build_cli_cmd(provider, model, prompt, system_prompt, session_id)?;
 
@@ -595,7 +699,7 @@ pub async fn run_cli_provider(
     let lock_task = io_lock.clone();
     let prov_str = provider.to_string();
     let spinner_task = tokio::spawn(async move {
-        let frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+        let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let mut i = 0usize;
         let t0 = std::time::Instant::now();
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -673,7 +777,8 @@ pub async fn run_cli_provider(
 
     let full_output = output_lines.join("");
 
-    let pre_assigned_sid: Option<String> = cmd.iter()
+    let pre_assigned_sid: Option<String> = cmd
+        .iter()
         .position(|a| a == "--session-id")
         .and_then(|i| cmd.get(i + 1))
         .cloned();

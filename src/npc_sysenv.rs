@@ -512,7 +512,11 @@ fn git_interactive(args: &[&str], cwd: &Path) -> std::result::Result<(), String>
         .status()
         .map_err(|e| format!("git failed: {}", e))?;
     if !status.success() {
-        return Err(format!("git {} failed with exit code: {:?}", args[0], status.code()));
+        return Err(format!(
+            "git {} failed with exit code: {:?}",
+            args[0],
+            status.code()
+        ));
     }
     Ok(())
 }
