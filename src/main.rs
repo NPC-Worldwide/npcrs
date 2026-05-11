@@ -16,7 +16,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Cmd, CompletionType, Config, Editor, EventHandler, Helper, KeyEvent, Modifiers};
 use std::borrow::Cow;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::ctrl_c;
 use tokio::sync::mpsc;
 
 const CYAN: &str = "\x1b[36m";
@@ -176,9 +176,8 @@ async fn main() -> Result<()> {
     let (interrupt_tx, mut interrupt_rx) = mpsc::channel::<()>(1);
     let interrupt_tx_clone = interrupt_tx.clone();
     tokio::spawn(async move {
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
         loop {
-            sigint.recv().await;
+            ctrl_c().await.expect("Failed to await Ctrl+C");
             let _ = interrupt_tx_clone.send(()).await;
         }
     });
@@ -526,9 +525,8 @@ async fn main() -> Result<()> {
                             interrupt_rx = rx;
                             let tx_clone = tx.clone();
                             tokio::spawn(async move {
-                                let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
                                 loop {
-                                    sigint.recv().await;
+                                    ctrl_c().await.expect("Failed to await Ctrl+C");
                                     let _ = tx_clone.send(()).await;
                                 }
                             });
@@ -554,9 +552,8 @@ async fn main() -> Result<()> {
                         interrupt_rx = rx;
                         let tx_clone = tx.clone();
                         tokio::spawn(async move {
-                            let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
                             loop {
-                                sigint.recv().await;
+                                ctrl_c().await.expect("Failed to await Ctrl+C");
                                 let _ = tx_clone.send(()).await;
                             }
                         });
@@ -582,9 +579,8 @@ async fn main() -> Result<()> {
                             interrupt_rx = rx;
                             let tx_clone = tx.clone();
                             tokio::spawn(async move {
-                                let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
                                 loop {
-                                    sigint.recv().await;
+                                    ctrl_c().await.expect("Failed to await Ctrl+C");
                                     let _ = tx_clone.send(()).await;
                                 }
                             });
