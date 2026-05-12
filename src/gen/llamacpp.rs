@@ -59,9 +59,8 @@ pub fn get_llamacpp_response(
         LlamaSampler::chain_simple([LlamaSampler::temp(temperature), LlamaSampler::dist(42)]);
 
     let mut output_tokens = Vec::new();
-    let mut n_cur = tokens.len() as i32;
 
-    for _ in 0..max_tokens {
+    for n_cur in (tokens.len() as i32..).zip(0..max_tokens).map(|(i, _)| i) {
         let new_token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
         if model.is_eog_token(new_token) {
@@ -74,7 +73,6 @@ pub fn get_llamacpp_response(
         batch
             .add(new_token, n_cur, &[0], true)
             .map_err(|_| NpcError::LlmRequest("Batch add failed".into()))?;
-        n_cur += 1;
 
         ctx.decode(&mut batch)
             .map_err(|e| NpcError::LlmRequest(format!("Decode error: {:?}", e)))?;
