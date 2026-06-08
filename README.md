@@ -1,5 +1,7 @@
 # npcrs
 
+![npcrs logo](npcrs.png)
+
 Rust core for the NPC system. Mirrors [npcpy](https://github.com/NPC-Worldwide/npcpy) for function parity.
 
 ## Modules
