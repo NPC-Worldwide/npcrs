@@ -223,7 +223,7 @@ Text:
 
     let messages = vec![crate::r#gen::Message::user(prompt)];
     let response = crate::r#gen::get_genai_response(
-        provider, model, &messages, None, None, None, None, false, None,
+        provider, model, &messages, None, None, None, None, None, false, None,
     )
     .await?;
 
@@ -271,7 +271,7 @@ New text:
 
     let messages = vec![crate::r#gen::Message::user(prompt)];
     let response = crate::r#gen::get_genai_response(
-        provider, model, &messages, None, None, None, None, false, None,
+        provider, model, &messages, None, None, None, None, None, false, None,
     )
     .await?;
 
@@ -470,7 +470,7 @@ pub async fn kg_sleep_process(kg: &mut KnowledgeGraph, model: &str, provider: &s
         );
         let messages = vec![crate::r#gen::Message::user(&prompt)];
         let resp = crate::r#gen::get_genai_response(
-            provider, model, &messages, None, None, None, None, false, None,
+            provider, model, &messages, None, None, None, None, None, false, None,
         )
         .await?;
         let content = resp.message.content.unwrap_or_default();
@@ -492,7 +492,7 @@ pub async fn kg_sleep_process(kg: &mut KnowledgeGraph, model: &str, provider: &s
         );
         let messages = vec![crate::r#gen::Message::user(&prompt)];
         let resp = crate::r#gen::get_genai_response(
-            provider, model, &messages, None, None, None, None, false, None,
+            provider, model, &messages, None, None, None, None, None, false, None,
         )
         .await?;
         let content = resp.message.content.unwrap_or_default();
@@ -534,7 +534,7 @@ pub async fn kg_dream_process(
     );
     let messages = vec![crate::r#gen::Message::user(&prompt)];
     let resp = crate::r#gen::get_genai_response(
-        provider, model, &messages, None, None, None, None, false, None,
+        provider, model, &messages, None, None, None, None, None, false, None,
     )
     .await?;
     let content = resp.message.content.unwrap_or_default();

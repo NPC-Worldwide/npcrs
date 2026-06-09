@@ -439,7 +439,7 @@ pub async fn execute_plan_command(
     ];
 
     let response = crate::r#gen::get_genai_response(
-        provider, model, &msgs, None, None, None, None, false, None,
+        provider, model, &msgs, None, None, None, None, None, false, None,
     )
     .await?;
 
