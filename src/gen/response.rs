@@ -16,6 +16,7 @@ fn get_client() -> &'static GenaiClient {
     GENAI_CLIENT.get_or_init(GenaiClient::default)
 }
 
+/// Maps OpenAI-compatible provider aliases to GenAI's OpenAI adapter.
 fn normalize_genai_provider(provider: &str) -> &str {
     match provider {
         "openai-compatible" | "openai-like" => "openai",
@@ -23,6 +24,7 @@ fn normalize_genai_provider(provider: &str) -> &str {
     }
 }
 
+/// Returns a trimmed API base URL with a trailing slash for stable URL joining.
 fn normalized_api_base_url(api_url: &str) -> String {
     let trimmed = api_url.trim();
     if trimmed.ends_with('/') {
@@ -32,6 +34,7 @@ fn normalized_api_base_url(api_url: &str) -> String {
     }
 }
 
+/// Builds the OpenAI chat-completions URL used for no-auth local endpoints.
 fn openai_chat_completions_url(api_url: &str) -> Result<String> {
     let base = normalized_api_base_url(api_url);
     let parsed = reqwest::Url::parse(&base)
@@ -44,6 +47,7 @@ fn openai_chat_completions_url(api_url: &str) -> Result<String> {
     Ok(full_url.to_string())
 }
 
+/// Creates a per-call GenAI client when an OpenAI-compatible API URL is set.
 fn custom_openai_client(
     api_url_override: Option<&str>,
     api_key_override: Option<&str>,
@@ -626,6 +630,19 @@ mod tests {
                 }
             })
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn normalized_api_base_url_trims_and_adds_trailing_slash() {
+        assert_eq!(normalized_api_base_url("http://host/v1"), "http://host/v1/");
+        assert_eq!(
+            normalized_api_base_url("http://host/v1/"),
+            "http://host/v1/"
+        );
+        assert_eq!(
+            normalized_api_base_url("  http://host/v1  "),
+            "http://host/v1/"
+        );
     }
 
     #[tokio::test]
