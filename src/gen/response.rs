@@ -1,11 +1,12 @@
 use crate::error::{NpcError, Result};
 use crate::r#gen::response_types::*;
 
-use genai::Client as GenaiClient;
 use genai::chat::{
     ChatMessage, ChatRequest, ChatResponse as GenaiChatResponse, MessageContent as GenaiContent,
     Tool as GenaiTool, ToolCall as GenaiToolCall, ToolResponse as GenaiToolResponse,
 };
+use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
+use genai::{Client as GenaiClient, Headers, ServiceTarget};
 
 use std::sync::OnceLock;
 
@@ -13,6 +14,76 @@ static GENAI_CLIENT: OnceLock<GenaiClient> = OnceLock::new();
 
 fn get_client() -> &'static GenaiClient {
     GENAI_CLIENT.get_or_init(GenaiClient::default)
+}
+
+/// Maps OpenAI-compatible provider aliases to GenAI's OpenAI adapter.
+fn normalize_genai_provider(provider: &str) -> &str {
+    match provider {
+        "openai-compatible" | "openai-like" => "openai",
+        other => other,
+    }
+}
+
+/// Returns a trimmed API base URL with a trailing slash for stable URL joining.
+fn normalized_api_base_url(api_url: &str) -> String {
+    let trimmed = api_url.trim();
+    if trimmed.ends_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/")
+    }
+}
+
+/// Builds the OpenAI chat-completions URL used for no-auth local endpoints.
+fn openai_chat_completions_url(api_url: &str) -> Result<String> {
+    let base = normalized_api_base_url(api_url);
+    let parsed = reqwest::Url::parse(&base)
+        .map_err(|err| NpcError::LlmRequest(format!("invalid api_url '{api_url}': {err}")))?;
+    let original_query_params = parsed.query().map(str::to_owned);
+    let mut full_url = parsed
+        .join("chat/completions")
+        .map_err(|err| NpcError::LlmRequest(format!("invalid api_url '{api_url}': {err}")))?;
+    full_url.set_query(original_query_params.as_deref());
+    Ok(full_url.to_string())
+}
+
+/// Creates a per-call GenAI client when an OpenAI-compatible API URL is set.
+fn custom_openai_client(
+    api_url_override: Option<&str>,
+    api_key_override: Option<&str>,
+) -> Result<Option<GenaiClient>> {
+    let Some(api_url_override) = api_url_override else {
+        return Ok(None);
+    };
+
+    let endpoint_base = normalized_api_base_url(api_url_override);
+    let no_auth_chat_url = openai_chat_completions_url(api_url_override)?;
+    let api_key = api_key_override.map(str::to_owned);
+
+    let target_resolver = ServiceTargetResolver::from_resolver_fn(
+        move |service_target: ServiceTarget| -> genai::resolver::Result<ServiceTarget> {
+            let ServiceTarget { model, .. } = service_target;
+            let endpoint = Endpoint::from_owned(endpoint_base.clone());
+            let auth = match api_key.clone() {
+                Some(key) => AuthData::from_single(key),
+                None => AuthData::RequestOverride {
+                    url: no_auth_chat_url.clone(),
+                    headers: Headers::default(),
+                },
+            };
+            Ok(ServiceTarget {
+                endpoint,
+                auth,
+                model,
+            })
+        },
+    );
+
+    Ok(Some(
+        GenaiClient::builder()
+            .with_service_target_resolver(target_resolver)
+            .build(),
+    ))
 }
 
 /// Main entry point — routes to ollama direct API or genai based on provider.
@@ -23,6 +94,7 @@ pub async fn get_genai_response(
     messages: &[Message],
     tools: Option<&[ToolDef]>,
     api_url_override: Option<&str>,
+    api_key_override: Option<&str>,
     format: Option<&str>,
     images: Option<&[String]>,
     stream: bool,
@@ -42,8 +114,14 @@ pub async fn get_genai_response(
         .await;
     }
 
+    let provider = normalize_genai_provider(provider);
+
     // Non-ollama providers go through genai
-    let client = get_client();
+    let custom_client = if provider == "openai" {
+        custom_openai_client(api_url_override, api_key_override)?
+    } else {
+        None
+    };
 
     let mut req = ChatRequest::new(Vec::new());
 
@@ -104,10 +182,11 @@ pub async fn get_genai_response(
 
     // genai expects provider::model format (e.g., "moonshot::kimi-k2.5")
     let genai_model = format!("{}::{}", provider, model);
-    let genai_resp = client
-        .exec_chat(&genai_model, req, None)
-        .await
-        .map_err(|e| NpcError::LlmRequest(format!("{}", e)))?;
+    let genai_resp = match custom_client {
+        Some(client) => client.exec_chat(&genai_model, req, None).await,
+        None => get_client().exec_chat(&genai_model, req, None).await,
+    }
+    .map_err(|e| NpcError::LlmRequest(format!("{}", e)))?;
 
     convert_genai_response(genai_resp, model)
 }
@@ -433,4 +512,190 @@ fn convert_genai_response(resp: GenaiChatResponse, model: &str) -> Result<LlmRes
         finish_reason: None,
         cost_usd: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    #[derive(Debug)]
+    struct ObservedRequest {
+        path: String,
+        authorization: Option<String>,
+        body: Value,
+    }
+
+    async fn spawn_openai_compatible_server() -> (String, oneshot::Receiver<ObservedRequest>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            let headers_end = loop {
+                let read = socket.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    panic!("client closed before sending request headers");
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(pos) = find_headers_end(&buffer) {
+                    break pos;
+                }
+            };
+
+            let headers_text = String::from_utf8_lossy(&buffer[..headers_end]).to_string();
+            let content_length = content_length(&headers_text);
+            let body_start = headers_end + 4;
+            while buffer.len() < body_start + content_length {
+                let read = socket.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+
+            let request_line = headers_text.lines().next().unwrap_or_default();
+            let path = request_line
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_string();
+            let authorization = headers_text.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if name.eq_ignore_ascii_case("authorization") {
+                    Some(value.trim().to_string())
+                } else {
+                    None
+                }
+            });
+            let body: Value =
+                serde_json::from_slice(&buffer[body_start..body_start + content_length]).unwrap();
+
+            let _ = tx.send(ObservedRequest {
+                path,
+                authorization,
+                body,
+            });
+
+            let response_body = serde_json::json!({
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-model",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "patched npcrs"
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 2,
+                    "total_tokens": 3
+                }
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        (format!("http://{addr}/v1"), rx)
+    }
+
+    fn find_headers_end(buffer: &[u8]) -> Option<usize> {
+        buffer.windows(4).position(|window| window == b"\r\n\r\n")
+    }
+
+    fn content_length(headers: &str) -> usize {
+        headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if name.eq_ignore_ascii_case("content-length") {
+                    value.trim().parse().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn normalized_api_base_url_trims_and_adds_trailing_slash() {
+        assert_eq!(normalized_api_base_url("http://host/v1"), "http://host/v1/");
+        assert_eq!(
+            normalized_api_base_url("http://host/v1/"),
+            "http://host/v1/"
+        );
+        assert_eq!(
+            normalized_api_base_url("  http://host/v1  "),
+            "http://host/v1/"
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_uses_api_url_without_auth() {
+        let (api_url, observed) = spawn_openai_compatible_server().await;
+        let response = get_genai_response(
+            "openai-compatible",
+            "test-model",
+            &[Message::user("hello")],
+            None,
+            Some(&api_url),
+            None,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let request = observed.await.unwrap();
+        assert_eq!(request.path, "/v1/chat/completions");
+        assert_eq!(request.authorization, None);
+        assert_eq!(request.body["model"], "test-model");
+        assert_eq!(
+            request.body["messages"][0]["content"],
+            serde_json::json!("hello")
+        );
+        assert_eq!(response.message.content.as_deref(), Some("patched npcrs"));
+    }
+
+    #[tokio::test]
+    async fn openai_like_uses_api_url_and_api_key() {
+        let (api_url, observed) = spawn_openai_compatible_server().await;
+        let response = get_genai_response(
+            "openai-like",
+            "test-model",
+            &[Message::user("hello")],
+            None,
+            Some(&api_url),
+            Some("test-key"),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let request = observed.await.unwrap();
+        assert_eq!(request.path, "/v1/chat/completions");
+        assert_eq!(request.authorization.as_deref(), Some("Bearer test-key"));
+        assert_eq!(request.body["model"], "test-model");
+        assert_eq!(response.message.content.as_deref(), Some("patched npcrs"));
+    }
 }

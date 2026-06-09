@@ -269,6 +269,7 @@ impl Kernel {
             &messages,
             None,
             process.npc.api_url.as_deref(),
+            process.npc.api_key.as_deref(),
             None,
             None,
             false,
@@ -301,7 +302,7 @@ impl Kernel {
         use crate::r#gen::cost::calculate_cost;
         use crate::r#gen::sanitize::sanitize_messages;
 
-        let (model, provider, system, api_url, npc_name, active_npc, tool_defs, executors) = {
+        let (model, provider, system, api_url, api_key, npc_name, active_npc, tool_defs, executors) = {
             let process = self
                 .processes
                 .get_mut(&pid)
@@ -323,6 +324,7 @@ impl Kernel {
             let provider = process.npc.resolved_provider();
             let system = process.npc.system_prompt(self.team.context.as_deref());
             let api_url = process.npc.api_url.clone();
+            let api_key = process.npc.api_key.clone();
             let npc_name = process.npc.name.clone();
             let active_npc = process.npc.clone();
 
@@ -336,11 +338,11 @@ impl Kernel {
                         .contains(&t.function.name)
                 });
                 (
-                    model, provider, system, api_url, npc_name, active_npc, td, ex,
+                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex,
                 )
             } else {
                 (
-                    model, provider, system, api_url, npc_name, active_npc, td, ex,
+                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex,
                 )
             }
         };
@@ -437,6 +439,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 &messages,
                 tools,
                 api_url.as_deref(),
+                api_key.as_deref(),
                 None,
                 None,
                 false,

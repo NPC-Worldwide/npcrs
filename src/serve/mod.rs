@@ -200,6 +200,7 @@ async fn chat(
             &messages,
             None,
             npc.api_url.as_deref(),
+            npc.api_key.as_deref(),
             None,
             None,
             false,
