@@ -1,0 +1,41 @@
+site_name: NPCrs — Rust Core for NPC
+site_url: https://npc-rs.readthedocs.io/
+site_description: Documentation for npcrs, the Rust implementation of NPC
+site_author: NPC Worldwide
+
+repo_url: https://github.com/NPC-Worldwide/npcrs
+repo_name: NPC-Worldwide/npcrs
+
+nav:
+  - Home: index.md
+  - Configuration: configuration.md
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
