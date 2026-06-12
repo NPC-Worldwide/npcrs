@@ -15,6 +15,7 @@ use crate::npc_compiler::{self, Jinx};
 use crate::process::{Capabilities, Pid, Process, ProcessState};
 use crate::scheduler::Scheduler;
 use crate::vfs::Vfs;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -42,21 +43,164 @@ pub struct Kernel {
     pub python_daemon: Option<PythonDaemon>,
 }
 
+/// Client for the npcsh LLM daemon.
+///
+/// Supports two modes:
+///   1. **Socket mode** — connects to a persistent Unix-domain socket (e.g.
+///      `~/.npcsh/daemon.sock`).  The daemon runs as a background service
+///      (`brew services` on macOS, systemd on Linux) and handles multiple
+///      concurrent clients via threads.
+///   2. **Subprocess mode** — spawns `python3 npcsh/daemon.py` as a child
+///      process (fallback when the socket is not available).
 pub struct PythonDaemon {
-    child: tokio::process::Child,
-    stdin: tokio::process::ChildStdin,
-    stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
+    mode: DaemonMode,
+}
+
+enum DaemonMode {
+    Socket {
+        writer: tokio::net::unix::OwnedWriteHalf,
+        reader: tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
+    },
+    Subprocess {
+        child: tokio::process::Child,
+        stdin: tokio::process::ChildStdin,
+        stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
+        _stderr_task: tokio::task::JoinHandle<()>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmRequest {
+    #[serde(rename = "type")]
+    pub req_type: String,
+    pub messages: Vec<crate::r#gen::Message>,
+    pub model: String,
+    pub provider: String,
+    pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<crate::r#gen::ToolDef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub think: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<crate::r#gen::ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<crate::r#gen::Usage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streamed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl PythonDaemon {
-    pub async fn spawn(team_dir: &str, db_path: &str) -> Result<Self> {
-        use tokio::io::BufReader;
+    /// Try to connect to a persistent Unix socket daemon.  Falls back to
+    /// spawning a subprocess if the socket is not available.
+    pub async fn spawn(_team_dir: &str, _db_path: &str) -> Result<Self> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+        // ── Try socket mode first ──
+        let socket_path = Self::socket_path();
+        match tokio::net::UnixStream::connect(&socket_path).await {
+            Ok(stream) => {
+            let (read_half, write_half) = stream.into_split();
+            let mut reader = tokio::io::BufReader::new(read_half);
+
+            // Wait for the ready signal from the daemon
+            let mut ready_line = String::new();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                reader.read_line(&mut ready_line),
+            )
+            .await
+            .map_err(|_| {
+                NpcError::Other(format!(
+                    "Daemon on {} never sent ready signal",
+                    socket_path.display()
+                ))
+            })??;
+
+            if !ready_line.contains("ready") {
+                return Err(NpcError::Other(format!(
+                    "Daemon on {} sent unexpected ready line: {}",
+                    socket_path.display(),
+                    ready_line.trim()
+                )));
+            }
+
+            tracing::info!("Connected to npcsh daemon on {}", socket_path.display());
+            return Ok(Self {
+                mode: DaemonMode::Socket {
+                    writer: write_half,
+                    reader,
+                },
+            });
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to connect to daemon socket at {}: {} — falling back to subprocess",
+                socket_path.display(),
+                e
+            );
+        }
+    }
+
+        // ── Fallback: spawn subprocess ──
+        Self::spawn_subprocess(_team_dir, _db_path).await
+    }
+
+    fn socket_path() -> std::path::PathBuf {
+        // Single canonical path so the Python daemon and Rust client agree.
+        // Can be overridden with NPCSH_DAEMON_SOCKET for custom setups.
+        if let Some(path) = std::env::var_os("NPCSH_DAEMON_SOCKET") {
+            return std::path::PathBuf::from(path);
+        }
+        let mut p = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        p.push(".npcsh/daemon.sock");
+        p
+    }
+
+    async fn spawn_subprocess(team_dir: &str, db_path: &str) -> Result<Self> {
+        use tokio::io::{AsyncBufReadExt, BufReader};
         use tokio::process::Command;
 
-        let mut child = Command::new("python3")
-            .arg("-c")
-            .arg(format!(
-                r#"
+        let daemon_script = Self::find_daemon_script();
+
+        let mut child = if let Some(script) = daemon_script {
+            Command::new("python3")
+                .arg(&script)
+                .env("NPCSH_DB_PATH", db_path)
+                .env("NPCSH_TEAM_DIR", team_dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| NpcError::Other(format!("Failed to spawn Python daemon ({}): {}", script.display(), e)))?
+        } else {
+            // Fallback inline script (legacy, rarely used)
+            Command::new("python3")
+                .arg("-c")
+                .arg(format!(
+                    r#"
 import sys, json, os
 os.environ.setdefault('NPCSH_DB_PATH', '{}')
 sys.path.insert(0, os.getcwd())
@@ -89,13 +233,14 @@ for line in sys.stdin:
         resp = json.dumps({{"output": f"Error: {{e}}", "ok": False}})
     print(resp, flush=True)
 "#,
-                db_path
-            ))
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| NpcError::Other(format!("Failed to spawn Python daemon: {}", e)))?;
+                    db_path
+                ))
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| NpcError::Other(format!("Failed to spawn Python daemon: {}", e)))?
+        };
 
         let stdin = child
             .stdin
@@ -110,40 +255,179 @@ for line in sys.stdin:
             .take()
             .ok_or_else(|| NpcError::Other("No stderr on daemon".into()))?;
 
-        use tokio::io::AsyncBufReadExt;
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let mut stderr_reader = BufReader::new(stderr);
-        let mut found_ready = false;
-        for _ in 0..50 {
+
+        let stderr_task = tokio::spawn(async move {
             let mut line = String::new();
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                stderr_reader.read_line(&mut line),
-            )
-            .await
-            {
-                Ok(Ok(0)) => break,
-                Ok(Ok(_)) => {
-                    if line.contains("ready") {
-                        found_ready = true;
-                        break;
+            let mut found_ready = false;
+            let mut ready_tx = Some(ready_tx);
+            loop {
+                line.clear();
+                match stderr_reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if !found_ready && line.contains("ready") {
+                            found_ready = true;
+                            if let Some(tx) = ready_tx.take() {
+                                let _ = tx.send(());
+                            }
+                            continue;
+                        }
+                        if found_ready {
+                            // Forward [STREAM] content and [THINK] reasoning
+                            let trimmed = line.trim_end_matches('\n');
+                            if let Some(stripped) = trimmed.strip_prefix("[STREAM]") {
+                                let unescaped = stripped.replace('\x01', "\n");
+                                eprint!("{}", unescaped);
+                            } else if let Some(stripped) = trimmed.strip_prefix("[THINK]") {
+                                let unescaped = stripped.replace('\x01', "\n");
+                                eprint!("\x1b[90m{}\x1b[0m", unescaped);
+                            }
+                            // Silently drop everything else
+                        }
                     }
+                    Err(_) => break,
                 }
-                _ => break,
             }
-        }
-        if !found_ready {
-            return Err(NpcError::Other(
-                "Daemon failed to start: never sent ready signal".into(),
-            ));
+        });
+
+        match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
+            Ok(Ok(())) => {}
+            _ => {
+                return Err(NpcError::Other(
+                    "Daemon failed to start: never sent ready signal".into(),
+                ));
+            }
         }
 
         Ok(Self {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
+            mode: DaemonMode::Subprocess {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+                _stderr_task: stderr_task,
+            },
         })
     }
 
+    fn find_daemon_script() -> Option<std::path::PathBuf> {
+        let candidates = ["npcsh/daemon.py", "../npcsh/daemon.py"];
+        if let Ok(cwd) = std::env::current_dir() {
+            for c in &candidates {
+                let p = cwd.join(c);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let p = dir.join("npcsh/daemon.py");
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+        if let Ok(output) = std::process::Command::new("python3")
+            .args(["-c", "import npcsh, os; print(os.path.dirname(os.path.abspath(npcsh.__file__)))",])
+            .output()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                let p = std::path::PathBuf::from(&path).join("daemon.py");
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
+
+    pub async fn llm(&mut self, request: &LlmRequest) -> Result<LlmResponse> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+        let mut line = serde_json::to_string(request).unwrap_or_default();
+        line.push('\n');
+
+        match &mut self.mode {
+            DaemonMode::Socket { writer, reader } => {
+                writer
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Socket write: {}", e)))?;
+                writer
+                    .flush()
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Socket flush: {}", e)))?;
+
+                // Read lines from the socket until we get a JSON response.
+                // Streaming chunks ([STREAM], [THINK]) are forwarded to the
+                // terminal immediately.
+                let mut resp_line = String::new();
+                loop {
+                    resp_line.clear();
+                    match reader.read_line(&mut resp_line).await {
+                        Ok(0) => {
+                            return Err(NpcError::Other(
+                                "Daemon closed socket before sending response".into(),
+                            ));
+                        }
+                        Ok(_) => {
+                            let trimmed = resp_line.trim_end_matches('\n');
+                            if let Some(stripped) = trimmed.strip_prefix("[STREAM]") {
+                                let unescaped = stripped.replace('\x01', "\n");
+                                eprint!("{}", unescaped);
+                                let _ = std::io::Write::flush(&mut std::io::stderr());
+                            } else if let Some(stripped) = trimmed.strip_prefix("[THINK]") {
+                                let unescaped = stripped.replace('\x01', "\n");
+                                eprint!("\x1b[90m{}\x1b[0m", unescaped);
+                                let _ = std::io::Write::flush(&mut std::io::stderr());
+                            } else if trimmed.starts_with('{') {
+                                // JSON response line
+                                let resp: LlmResponse = serde_json::from_str(trimmed)
+                                    .map_err(|e| NpcError::Other(format!(
+                                        "Socket LLM parse: {} (raw: {})",
+                                        e,
+                                        trimmed
+                                    )))?;
+                                return Ok(resp);
+                            }
+                            // Silently drop other noise
+                        }
+                        Err(e) => {
+                            return Err(NpcError::Other(format!("Socket read: {}", e)));
+                        }
+                    }
+                }
+            }
+            DaemonMode::Subprocess { stdin, stdout, .. } => {
+                stdin
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Daemon LLM write: {}", e)))?;
+                stdin
+                    .flush()
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Daemon LLM flush: {}", e)))?;
+
+                let mut resp_line = String::new();
+                stdout
+                    .read_line(&mut resp_line)
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Daemon LLM read: {}", e)))?;
+
+                let resp: LlmResponse = serde_json::from_str(&resp_line).map_err(|e| {
+                    NpcError::Other(format!("Daemon LLM parse: {} (raw: {})", e, resp_line.trim()))
+                })?;
+
+                Ok(resp)
+            }
+        }
+    }
+
+    /// Send a raw command request to the daemon (used for legacy Python
+    /// slash-command execution).  Only supported in subprocess mode for now.
     pub async fn execute(&mut self, command: &str, stdin_input: Option<&str>) -> Result<String> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
@@ -154,30 +438,66 @@ for line in sys.stdin:
         let mut line = serde_json::to_string(&req).unwrap_or_default();
         line.push('\n');
 
-        self.stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| NpcError::Other(format!("Daemon write: {}", e)))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|e| NpcError::Other(format!("Daemon flush: {}", e)))?;
+        match &mut self.mode {
+            DaemonMode::Socket { writer, reader } => {
+                writer
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Socket write: {}", e)))?;
+                writer
+                    .flush()
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Socket flush: {}", e)))?;
 
-        let mut resp_line = String::new();
-        self.stdout
-            .read_line(&mut resp_line)
-            .await
-            .map_err(|e| NpcError::Other(format!("Daemon read: {}", e)))?;
+                let mut resp_line = String::new();
+                // Read lines until we hit JSON (ignoring any streaming noise)
+                loop {
+                    resp_line.clear();
+                    reader
+                        .read_line(&mut resp_line)
+                        .await
+                        .map_err(|e| NpcError::Other(format!("Socket read: {}", e)))?;
+                    let trimmed = resp_line.trim_end_matches('\n');
+                    if trimmed.starts_with('{') {
+                        let resp: serde_json::Value = serde_json::from_str(trimmed)
+                            .map_err(|e| NpcError::Other(format!(
+                                "Socket parse: {} (raw: {})", e, trimmed
+                            )))?;
+                        return Ok(resp
+                            .get("output")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string());
+                    }
+                }
+            }
+            DaemonMode::Subprocess { stdin, stdout, .. } => {
+                stdin
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Daemon write: {}", e)))?;
+                stdin
+                    .flush()
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Daemon flush: {}", e)))?;
 
-        let resp: serde_json::Value = serde_json::from_str(&resp_line).map_err(|e| {
-            NpcError::Other(format!("Daemon parse: {} (raw: {})", e, resp_line.trim()))
-        })?;
+                let mut resp_line = String::new();
+                stdout
+                    .read_line(&mut resp_line)
+                    .await
+                    .map_err(|e| NpcError::Other(format!("Daemon read: {}", e)))?;
 
-        Ok(resp
-            .get("output")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string())
+                let resp: serde_json::Value = serde_json::from_str(&resp_line).map_err(|e| {
+                    NpcError::Other(format!("Daemon parse: {} (raw: {})", e, resp_line.trim()))
+                })?;
+
+                Ok(resp
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string())
+            }
+        }
     }
 }
 
@@ -302,7 +622,7 @@ impl Kernel {
         use crate::r#gen::cost::calculate_cost;
         use crate::r#gen::sanitize::sanitize_messages;
 
-        let (model, provider, system, api_url, api_key, npc_name, active_npc, tool_defs, executors) = {
+        let (model, provider, system, api_url, api_key, npc_name, active_npc, tool_defs, executors, think_mode, conv_id) = {
             let process = self
                 .processes
                 .get_mut(&pid)
@@ -327,6 +647,8 @@ impl Kernel {
             let api_key = process.npc.api_key.clone();
             let npc_name = process.npc.name.clone();
             let active_npc = process.npc.clone();
+            let think_mode = process.think;
+            let conv_id = process.conversation_id.clone();
 
             if !process.capabilities.is_superuser && !process.capabilities.allowed_jinxes.is_empty()
             {
@@ -338,11 +660,11 @@ impl Kernel {
                         .contains(&t.function.name)
                 });
                 (
-                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex,
+                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex, think_mode, conv_id,
                 )
             } else {
                 (
-                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex,
+                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex, think_mode, conv_id,
                 )
             }
         };
@@ -350,7 +672,7 @@ impl Kernel {
         let tools = if tool_defs.is_empty() {
             None
         } else {
-            Some(tool_defs.as_slice())
+            Some(tool_defs.clone())
         };
 
         let cwd = std::env::current_dir()
@@ -388,7 +710,8 @@ impl Kernel {
                 tool_defs.iter().map(|t| t.function.name.as_str()).collect();
             format!(
                 "\nYou have access to these tools: {}. Call tools via the function calling interface.\n\n\
-Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user. Use stop when you are done. Do not call the same tool twice with the same arguments.\n\
+Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user.\n\
+IMPORTANT: After at most 3-5 tool calls, you MUST call stop to finish. Do not keep reading files or running commands indefinitely — gather what you need, respond, and stop.\n\
 Do not call stop without first calling chat to deliver a response to the user.\n\
 The user can see tool outputs directly. Do not re-write or repeat them in your chat response — just reference the relevant parts.",
                 tool_names.join(", ")
@@ -397,7 +720,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             String::new()
         };
 
-        let max_iterations = 50;
+        let max_iterations = 12;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let mut final_output = String::new();
@@ -433,19 +756,86 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 messages.len(),
             );
 
-            let response = crate::r#gen::get_genai_response(
-                &provider,
-                &model,
-                &messages,
-                tools,
-                api_url.as_deref(),
-                api_key.as_deref(),
-                None,
-                None,
-                false,
-                None,
-            )
-            .await?;
+            let has_daemon = self.python_daemon.is_some();
+            let response: crate::r#gen::LlmResponse = if has_daemon {
+                let daemon = self.python_daemon.as_mut().unwrap();
+                let req = LlmRequest {
+                    req_type: "llm".to_string(),
+                    messages,
+                    model: model.clone(),
+                    provider: provider.clone(),
+                    prompt: iter_prompt,
+                    context: Some(context_info.clone()),
+                    tools: tools.clone(),
+                    tool_choice: Some("auto".to_string()),
+                    api_url: api_url.clone(),
+                    api_key: api_key.clone(),
+                    think: think_mode,
+                    attachments: None,
+                };
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    daemon.llm(&req),
+                ).await {
+                    Ok(Ok(llm_resp)) => {
+                        if !llm_resp.ok {
+                            let err = llm_resp.error.clone().unwrap_or_else(|| "unknown daemon error".to_string());
+                            return Err(NpcError::Other(format!("Daemon LLM error: {}", err)));
+                        }
+                        let tc = llm_resp.tool_calls.as_ref().map(|tcs| {
+                            tcs.iter().map(|tc| crate::r#gen::ToolCall {
+                                id: tc.id.clone(),
+                                r#type: tc.r#type.clone(),
+                                function: crate::r#gen::ToolCallFunction {
+                                    name: tc.function.name.clone(),
+                                    arguments: tc.function.arguments.clone(),
+                                },
+                            }).collect::<Vec<_>>()
+                        });
+                        // Track streamed state from daemon
+                        {
+                            let process = self.processes.get_mut(&pid).unwrap();
+                            process.last_streamed = llm_resp.streamed.unwrap_or(false);
+                            process.last_thinking = llm_resp.thinking.clone();
+                        }
+                        crate::r#gen::LlmResponse {
+                            message: Message {
+                                role: "assistant".to_string(),
+                                content: llm_resp.response.clone(),
+                                tool_calls: tc,
+                                tool_call_id: None,
+                                name: None,
+                                thinking: llm_resp.thinking.clone(),
+                                reasoning_content: llm_resp.reasoning.clone(),
+                            },
+                            usage: llm_resp.usage.clone(),
+                            model: model.clone(),
+                            finish_reason: None,
+                            cost_usd: None,
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        return Err(NpcError::Other(format!("Daemon LLM call failed: {}", e)));
+                    }
+                    Err(_) => {
+                        return Err(NpcError::Other("Daemon LLM call timed out after 120s".into()));
+                    }
+                }
+            } else {
+                crate::r#gen::get_genai_response(
+                    &provider,
+                    &model,
+                    &messages,
+                    tools.as_deref(),
+                    api_url.as_deref(),
+                    api_key.as_deref(),
+                    None,
+                    None,
+                    false,
+                    think_mode,
+                )
+                .await?
+            };
 
             if let Some(ref usage) = response.usage {
                 total_input_tokens += usage.prompt_tokens;
@@ -458,6 +848,54 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             if iteration == 0 {
                 let process = self.processes.get_mut(&pid).unwrap();
                 process.messages.push(Message::user(input));
+                let _ = self.history.save_conversation_message(
+                    &conv_id, "user", input, &cwd,
+                    Some(&model), Some(&provider),
+                    Some(&npc_name), Some(&self.team.name),
+                    None, None, None,
+                    None, None, None,
+                );
+            }
+
+            // Save assistant response to DB
+            let tool_calls_json = if let Some(ref tc) = response.message.tool_calls {
+                match serde_json::to_string(tc) {
+                    Ok(s) => Some(s),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+            let _ = self.history.save_conversation_message(
+                &conv_id, "assistant",
+                response.message.content.as_deref().unwrap_or(""),
+                &cwd,
+                Some(&model), Some(&provider),
+                Some(&npc_name), Some(&self.team.name),
+                tool_calls_json.as_deref(),
+                None, None,
+                response.usage.as_ref().map(|u| u.prompt_tokens),
+                response.usage.as_ref().map(|u| u.completion_tokens),
+                response.usage.as_ref().map(|u| calculate_cost(&model, u.prompt_tokens, u.completion_tokens)),
+            );
+
+            // Print actual thinking / reasoning content when present.
+            // If the response was already streamed, thinking was shown in
+            // real-time via [THINK] chunks — don't print it again.
+            {
+                let process = self.processes.get(&pid).unwrap();
+                if !process.last_streamed {
+                    if let Some(ref t) = response.message.thinking {
+                        if !t.is_empty() {
+                            eprintln!("\x1b[90m  [iter {}] thinking:\x1b[0m {}", iteration + 1, t);
+                        }
+                    }
+                    if let Some(ref r) = response.message.reasoning_content {
+                        if !r.is_empty() {
+                            eprintln!("\x1b[90m  [iter {}] reasoning:\x1b[0m {}", iteration + 1, r);
+                        }
+                    }
+                }
             }
 
             if let Some(ref tool_calls) = response.message.tool_calls {
@@ -468,15 +906,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     process.messages.push(response.message.clone());
                 }
 
-                if let Some(ref text) = response.message.content {
-                    if !text.is_empty() {
-                        eprintln!(
-                            "\x1b[90m  [iter {}] thinking:\x1b[0m {}",
-                            iteration + 1,
-                            text
-                        );
-                    }
-                }
                 let called: Vec<String> = tool_calls
                     .iter()
                     .map(|tc| {
@@ -484,8 +913,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             .iter()
                             .find(|td| td.function.name == tc.function.name)
                             .and_then(|td| td.function.parameters.get("properties"))
-                            .and_then(|p| p.as_object())
-                            .map(|obj| obj.keys().cloned().collect())
+                            .and_then(|p: &serde_json::Value| p.as_object())
+                            .map(|obj: &serde_json::Map<String, serde_json::Value>| obj.keys().cloned().collect())
                             .unwrap_or_default();
                         let filtered = if let Ok(parsed) =
                             serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
@@ -562,7 +991,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         .execute_tool(tc_name, &args, &executors, &active_npc)
                         .await;
 
-                    eprintln!("\x1b[36m\n⚡ {}:\x1b[0m", tc_name);
+                    eprintln!("\x1b[36m\n⚡ {} [{}|{}]:\x1b[0m", tc_name, model, provider);
                     let preview = if tool_result.len() > 500 {
                         format!(
                             "{}...\n[{} chars total]",
@@ -590,6 +1019,16 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     process
                         .messages
                         .push(Message::tool_result(tc_id, &tool_result));
+
+                    // Save tool result to DB
+                    let _ = self.history.save_conversation_message(
+                        &conv_id, "tool", &tool_result, &cwd,
+                        Some(&model), Some(&provider),
+                        Some(&npc_name), Some(&self.team.name),
+                        None, None,
+                        Some(tc_id),
+                        None, None, None,
+                    );
                 }
             } else {
                 final_output = response.message.content.clone().unwrap_or_default();
@@ -618,7 +1057,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
         active_npc: &crate::npc_compiler::NPC,
     ) -> String {
         match name {
-            "sh" => {
+            "sh" | "shell" => {
                 let cmd = args.get("bash_command").cloned().unwrap_or_default();
                 if cmd.is_empty() {
                     return "(no command provided)".to_string();
@@ -647,7 +1086,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     Err(e) => format!("Failed: {}", e),
                 }
             }
-            "python" => {
+            "python" | "py" => {
                 let code = args.get("code").cloned().unwrap_or_default();
                 if code.is_empty() {
                     return "(no code provided)".to_string();
@@ -984,4 +1423,3 @@ impl std::fmt::Display for KernelStats {
     }
 }
 
-use serde::Serialize;

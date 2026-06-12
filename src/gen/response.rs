@@ -221,6 +221,10 @@ struct OllamaMessage {
     tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     images: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 /// Ollama chat API response body
@@ -239,6 +243,10 @@ struct OllamaResponseMessage {
     content: String,
     #[serde(default)]
     tool_calls: Option<Vec<OllamaToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -306,6 +314,8 @@ async fn get_ollama_response(
                 tool_calls: tool_calls_json,
                 tool_call_id: m.tool_call_id.clone(),
                 images: None,
+                thinking: None,
+                reasoning_content: None,
             }
         })
         .collect();
@@ -411,6 +421,8 @@ async fn get_ollama_response(
     let msg = ollama_resp.message.unwrap_or(OllamaResponseMessage {
         content: String::new(),
         tool_calls: None,
+        thinking: None,
+        reasoning_content: None,
     });
 
     let content_text = if msg.content.is_empty() {
@@ -448,6 +460,8 @@ async fn get_ollama_response(
             tool_calls,
             tool_call_id: None,
             name: None,
+            thinking: None,
+            reasoning_content: None,
         },
         usage,
         model: model.to_string(),
@@ -506,6 +520,8 @@ fn convert_genai_response(resp: GenaiChatResponse, model: &str) -> Result<LlmRes
             tool_calls,
             tool_call_id: None,
             name: None,
+            thinking: None,
+            reasoning_content: None,
         },
         usage,
         model: model.to_string(),

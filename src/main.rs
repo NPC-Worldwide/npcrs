@@ -1,24 +1,13 @@
-#![allow(
-    dead_code,
-    unused_variables,
-    unused_assignments,
-    clippy::collapsible_if,
-    clippy::collapsible_else_if,
-    clippy::manual_strip,
-    clippy::needless_borrows_for_generic_args
-)]
+//! npcsh-rs — the NPC OS shell.
+//!
+//! Full-featured REPL with raw-mode input, tab completion, colored prompt,
+//! mode system, .npcshrc config, and streaming output.
+
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use rustyline::completion::{Completer, Pair};
-use rustyline::error::ReadlineError;
-use rustyline::highlight::Highlighter;
-use rustyline::hint::Hinter;
-use rustyline::validate::Validator;
-use rustyline::{Cmd, CompletionType, Config, Editor, EventHandler, Helper, KeyEvent, Modifiers};
-use std::borrow::Cow;
-use tokio::signal::ctrl_c;
-use tokio::sync::mpsc;
+use std::io::{self, Write};
 
+// ── Colors ──
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
 const DIM: &str = "\x1b[90m";
@@ -28,16 +17,75 @@ const RED: &str = "\x1b[31m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
+fn handle_paste_input(raw: &str) -> (String, Option<String>) {
+    let bytes = raw.as_bytes();
+    let is_binary = if bytes.len() > 4 {
+        (bytes[0] == 0x89 && bytes[1] == b'P' && bytes[2] == b'N' && bytes[3] == b'G')
+            || (bytes[0] == 0xFF && bytes[1] == 0xD8)
+            || (bytes[0] == b'G' && bytes[1] == b'I' && bytes[2] == b'F' && bytes[3] == b'8')
+            || (bytes[0] == b'B' && bytes[1] == b'M')
+            || raw.starts_with("data:image/")
+            || {
+                let non_printable = bytes.iter().take(100).filter(|&&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t').count();
+                non_printable > 10
+            }
+    } else {
+        false
+    };
+
+    if is_binary {
+        let ext = if bytes.len() > 4 && bytes[0] == 0x89 { ".png" }
+            else if bytes.len() > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 { ".jpg" }
+            else if raw.starts_with("data:image/png") { ".png" }
+            else if raw.starts_with("data:image/jpeg") || raw.starts_with("data:image/jpg") { ".jpg" }
+            else { ".bin" };
+
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!("npcsh_paste_{}{}", std::process::id(), ext));
+        let write_data = if raw.starts_with("data:image/") {
+            if let Some((_, data)) = raw.split_once(',') {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default()
+            } else {
+                raw.as_bytes().to_vec()
+            }
+        } else {
+            raw.as_bytes().to_vec()
+        };
+        let _ = std::fs::write(&temp_path, &write_data);
+        let path_str = temp_path.to_string_lossy().to_string();
+        eprintln!("\x1b[90m[pasted image: {}]\x1b[0m", path_str);
+        return (format!("[pasted image: {}]", path_str), Some(path_str));
+    }
+
+    let line_count = raw.lines().count();
+    let char_count = raw.len();
+    if line_count > 3 || char_count > 500 {
+        eprintln!("\x1b[90m[pasted: {} lines, {} chars]\x1b[0m", line_count, char_count);
+        return (raw.to_string(), Some(raw.to_string()));
+    }
+
+    (raw.to_string(), None)
+}
+
+// ── Tab Completion ──
 struct NpcHelper {
     npc_names: Vec<String>,
     commands: Vec<String>,
 }
 
+#[derive(Clone)]
+struct Completion {
+    display: String,
+    replacement: String,
+}
+
 impl NpcHelper {
     fn new(npc_names: Vec<String>, jinx_names: Vec<String>) -> Self {
         let mut commands = vec![
-            "/ps", "/stats", "/help", "/quit", "/exit", "/clear", "/agent", "/chat", "/cmd",
-            "/switch", "/kill", "/jinxes", "/set", "/history",
+            "/ps", "/stats", "/help", "/quit", "/exit", "/clear",
+            "/agent", "/chat", "/cmd", "/switch", "/kill", "/jinxes",
+            "/set", "/history",
         ]
         .into_iter()
         .map(String::from)
@@ -47,22 +95,10 @@ impl NpcHelper {
             commands.push(format!("/{}", j));
         }
 
-        Self {
-            npc_names,
-            commands,
-        }
+        Self { npc_names, commands }
     }
-}
 
-impl Completer for NpcHelper {
-    type Candidate = Pair;
-
-    fn complete(
-        &self,
-        line: &str,
-        pos: usize,
-        _ctx: &rustyline::Context<'_>,
-    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+    fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Completion>) {
         let word_start = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[word_start..pos];
 
@@ -72,7 +108,7 @@ impl Completer for NpcHelper {
             let prefix = &word[1..];
             for name in &self.npc_names {
                 if name.starts_with(prefix) {
-                    matches.push(Pair {
+                    matches.push(Completion {
                         display: format!("@{}", name),
                         replacement: format!("@{} ", name),
                     });
@@ -81,7 +117,7 @@ impl Completer for NpcHelper {
         } else if word.starts_with('/') {
             for cmd in &self.commands {
                 if cmd.starts_with(word) {
-                    matches.push(Pair {
+                    matches.push(Completion {
                         display: cmd.clone(),
                         replacement: format!("{} ", cmd),
                     });
@@ -89,27 +125,35 @@ impl Completer for NpcHelper {
             }
         }
 
-        Ok((word_start, matches))
+        (word_start, matches)
+    }
+
+    fn hint(&self, line: &str, pos: usize) -> Option<String> {
+        if pos != line.len() {
+            return None;
+        }
+        let word_start = line.rfind(' ').map(|i| i + 1).unwrap_or(0);
+        let word = &line[word_start..];
+
+        if word.starts_with('/') && word.len() > 1 {
+            for cmd in &self.commands {
+                if cmd.starts_with(word) && cmd.len() > word.len() {
+                    return Some(cmd[word.len()..].to_string());
+                }
+            }
+        } else if word.starts_with('@') && word.len() > 1 {
+            let prefix = &word[1..];
+            for name in &self.npc_names {
+                if name.starts_with(prefix) && name.len() > prefix.len() {
+                    return Some(name[prefix.len()..].to_string());
+                }
+            }
+        }
+        None
     }
 }
 
-impl Hinter for NpcHelper {
-    type Hint = String;
-}
-
-impl Highlighter for NpcHelper {
-    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
-        &'s self,
-        prompt: &'p str,
-        _default: bool,
-    ) -> Cow<'b, str> {
-        Cow::Borrowed(prompt)
-    }
-}
-
-impl Validator for NpcHelper {}
-impl Helper for NpcHelper {}
-
+// ── Mode ──
 #[derive(Clone, PartialEq)]
 enum Mode {
     Agent,
@@ -129,6 +173,7 @@ impl std::fmt::Display for Mode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Init logging
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -138,55 +183,122 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
 
+    // Load .env and .npcshrc
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
+    // Check if invoked as `npc` or `npc-jinx` (shebang mode)
+    let invoked_as = std::env::args()
+        .next()
+        .and_then(|a| std::path::Path::new(&a).file_name().map(|f| f.to_string_lossy().to_string()))
+        .unwrap_or_default();
+
+    let args: Vec<String> = std::env::args().collect();
+
+    // npc <file.npc|file.jinx|init> [args...]
+    if invoked_as == "npc" {
+        if let Some(file) = args.get(1) {
+            if file == "init" {
+                let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+                return init_team(dir);
+            } else if file.ends_with(".jinx") {
+                let jinx_args: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
+                return exec_jinx_file(file, &jinx_args).await;
+            } else if file.ends_with(".npc") {
+                return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
+            }
+        }
+    }
+
+    // npcsh script.nsh — execute .nsh file
+    if let Some(file) = args.get(1) {
+        if file.ends_with(".nsh") && !file.starts_with('-') {
+            return exec_nsh_file(file).await;
+        }
+    }
+
+    // Check for -c flag
+    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
+        if let Some(command) = args.get(pos + 1) {
+            let team_dir = find_team_dir();
+            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+            let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+            match kernel.exec(0, command).await {
+                Ok(output) => {
+                    if !output.is_empty() {
+                        println!("{}", output);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    // Find team directory
     let team_dir = find_team_dir();
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
 
+    // Boot the kernel
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
+    // Print welcome
     print_welcome(&kernel);
 
-    let config = Config::builder()
-        .completion_type(CompletionType::List)
-        .build();
+    // Spawn Python daemon in background
+    let daemon_team = team_dir.clone();
+    let daemon_db = db_path.clone();
+    let daemon_handle = tokio::spawn(async move {
+        npcrs::kernel::PythonDaemon::spawn(&daemon_team, &daemon_db).await
+    });
 
+    // Set up raw-mode input
     let npc_names: Vec<String> = kernel.ps().iter().map(|p| p.npc.name.clone()).collect();
     let jinx_names: Vec<String> = kernel.jinx_names().into_iter().map(String::from).collect();
     let helper = NpcHelper::new(npc_names, jinx_names);
 
     let history_path = shellexpand::tilde("~/.npcsh_history").to_string();
-    let mut rl = Editor::with_config(config).unwrap();
-    rl.set_helper(Some(helper));
+    let mut history: Vec<String> = std::fs::read_to_string(&history_path)
+        .unwrap_or_default()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    let mut history_index: Option<usize> = None;
 
-    // Bind Escape key to trigger interrupt (same as Ctrl+C)
-    rl.bind_sequence(
-        KeyEvent::new('', Modifiers::empty()),
-        EventHandler::Simple(Cmd::Interrupt),
-    );
-
-    // Load existing history
-    match rl.load_history(&history_path) {
-        Ok(_) => tracing::info!("Loaded history from {}", history_path),
-        Err(e) => tracing::info!("No existing history found or error loading: {}", e),
-    }
-
-    // Set up Ctrl+C signal handler for interrupting LLM calls
-    let (interrupt_tx, mut interrupt_rx) = mpsc::channel::<()>(1);
-    let interrupt_tx_clone = interrupt_tx.clone();
-    tokio::spawn(async move {
-        loop {
-            ctrl_c().await.expect("Failed to await Ctrl+C");
-            let _ = interrupt_tx_clone.send(()).await;
-        }
-    });
-
+    // REPL state
     let mut current_pid: u32 = 0;
     let mut mode = Mode::Agent;
-    let mut turn_count: u64 = 0;
+    let mut _turn_count: u64 = 0;
+    let mut session_input_tokens: u64 = 0;
+    let mut session_output_tokens: u64 = 0;
+    let mut session_cost: f64 = 0.0;
+    let session_start = std::time::Instant::now();
+
+    let daemon_handle = std::sync::Arc::new(tokio::sync::Mutex::new(Some(daemon_handle)));
 
     loop {
+        if kernel.python_daemon.is_none() {
+            let mut guard = daemon_handle.try_lock();
+            if let Ok(ref mut opt) = guard {
+                if let Some(handle) = opt.as_mut() {
+                    if handle.is_finished() {
+                        if let Some(h) = opt.take() {
+                            match h.await {
+                                Ok(Ok(daemon)) => {
+                                    kernel.python_daemon = Some(daemon);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build prompt
         let npc_name = kernel
             .get_process(current_pid)
             .map(|p| p.npc.name.as_str())
@@ -209,33 +321,63 @@ async fn main() -> Result<()> {
             .map(|p| p.npc.resolved_model())
             .unwrap_or_else(|| "?".to_string());
 
+        // Build usage hint
+        let usage_hint = if session_input_tokens > 0 || session_output_tokens > 0 {
+            let elapsed = session_start.elapsed().as_secs();
+            let time_str = if elapsed >= 3600 {
+                format!("{}h{}m", elapsed / 3600, (elapsed % 3600) / 60)
+            } else if elapsed >= 60 {
+                format!("{}m{}s", elapsed / 60, elapsed % 60)
+            } else {
+                format!("{}s", elapsed)
+            };
+            let cost_str = if session_cost > 0.0 {
+                format!(" | ${:.4}", session_cost)
+            } else {
+                String::new()
+            };
+            format!(
+                " {DIM}{},{} tok{} | {}{RESET}",
+                session_input_tokens, session_output_tokens, cost_str, time_str
+            )
+        } else {
+            String::new()
+        };
+
         let prompt = format!(
-            "{DIM}{cwd}{RESET} {CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET}\n{PURPLE}>{RESET} "
+            "{DIM}{cwd}{RESET} {CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET}{usage_hint} {PURPLE}>{RESET} "
         );
 
-        let input = match rl.readline(&prompt) {
-            Ok(line) => line,
-            Err(ReadlineError::Interrupted) => {
-                eprintln!("^C");
-                continue;
+        // Read input with raw mode (Ctrl-E/Ctrl-O work immediately)
+        let input = match readline_raw(
+            &prompt,
+            &mut history,
+            &mut history_index,
+            &helper,
+            &mut kernel,
+            current_pid,
+        ) {
+            Ok(Some(line)) => {
+                history.push(line.clone());
+                history_index = None;
+                // Save history after every accepted command
+                let _ = std::fs::write(&history_path, history.join("\n") + "\n");
+                line
             }
-            Err(ReadlineError::Eof) => break,
+            Ok(None) => break,  // Ctrl-D = EOF, exit gracefully
             Err(e) => {
                 eprintln!("Error: {}", e);
                 break;
             }
         };
 
+        let (input, _pasted_content) = handle_paste_input(&input);
         let input = input.trim().to_string();
         if input.is_empty() {
             continue;
         }
 
-        // Add to history (ignoring errors silently)
-        if !input.trim().is_empty() {
-            let _ = rl.add_history_entry(&input);
-        }
-
+        // ── Built-in commands ──
         let handled = match input.as_str() {
             "exit" | "quit" | "/quit" | "/exit" => break,
 
@@ -249,13 +391,9 @@ async fn main() -> Result<()> {
                     };
                     println!(
                         "  {CYAN}@{:<12}{RESET} pid:{:<3} {state_color}{:?}{RESET}  tokens:{}/{} cost:${:.4} turns:{}",
-                        p.npc.name,
-                        p.pid,
-                        p.state,
-                        p.usage.total_input_tokens,
-                        p.usage.total_output_tokens,
-                        p.usage.total_cost_usd,
-                        p.usage.total_turns,
+                        p.npc.name, p.pid, p.state,
+                        p.usage.total_input_tokens, p.usage.total_output_tokens,
+                        p.usage.total_cost_usd, p.usage.total_turns,
                     );
                 }
                 true
@@ -265,23 +403,14 @@ async fn main() -> Result<()> {
                 let s = kernel.stats();
                 println!(
                     "{BOLD}Kernel Stats{RESET}\n  uptime: {}s\n  processes: {} (run:{} blk:{} dead:{})\n  tokens: {} (in+out)\n  cost: ${:.4}\n  jinxes: {}",
-                    s.uptime_secs,
-                    s.total_processes,
-                    s.running,
-                    s.blocked,
-                    s.dead,
-                    s.total_tokens,
-                    s.total_cost_usd,
-                    s.jinx_count,
+                    s.uptime_secs, s.total_processes, s.running, s.blocked, s.dead,
+                    s.total_tokens, s.total_cost_usd, s.jinx_count,
                 );
                 true
             }
 
             "/help" => {
-                println!(
-                    "{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n",
-                    env!("CARGO_PKG_VERSION")
-                );
+                println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("NPCSH_VERSION"));
                 println!("{BOLD}Modes:{RESET}");
                 println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
                 println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
@@ -332,14 +461,7 @@ async fn main() -> Result<()> {
                 sorted.sort();
                 println!("{BOLD}Available jinxes ({}):{RESET}", sorted.len());
                 for chunk in sorted.chunks(6) {
-                    println!(
-                        "  {}",
-                        chunk
-                            .iter()
-                            .map(|n| format!("{CYAN}/{n}{RESET}"))
-                            .collect::<Vec<_>>()
-                            .join("  ")
-                    );
+                    println!("  {}", chunk.iter().map(|n| format!("{CYAN}/{n}{RESET}")).collect::<Vec<_>>().join("  "));
                 }
                 true
             }
@@ -383,10 +505,7 @@ async fn main() -> Result<()> {
                     let name = kernel.get_process(current_pid).map(|p| p.npc.name.clone());
                     kernel.kill(current_pid, 0).ok();
                     current_pid = 0;
-                    eprintln!(
-                        "{YELLOW}Killed @{} — switched to init{RESET}",
-                        name.unwrap_or_default()
-                    );
+                    eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
                 }
                 true
             }
@@ -398,12 +517,14 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        // /set key=value
         if input.starts_with("/set ") {
             let rest = input.strip_prefix("/set ").unwrap().trim();
             handle_set_command(rest, &mut kernel, current_pid, &mut mode);
             continue;
         }
 
+        // @npc delegation or switch
         if input.starts_with('@') {
             let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
             let target = parts[0];
@@ -428,6 +549,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        // /slash commands → try as jinx
         if input.starts_with('/') {
             let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
             let cmd_name = parts[0];
@@ -465,6 +587,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        // cd
         if input.starts_with("cd ") || input == "cd" {
             let target = input.strip_prefix("cd").unwrap().trim();
             let target = if target.is_empty() {
@@ -489,108 +612,96 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        // Terminal editors
         if is_terminal_editor(&input) {
             run_interactive(&input);
             continue;
         }
 
+        // Interactive commands
         if is_interactive(&input) {
             run_interactive(&input);
             continue;
         }
 
-        turn_count += 1;
+        // Mode-specific dispatch
+        _turn_count += 1;
 
-        match mode {
+        let (npc_name_str, team_name_str, model_str, provider_str, conv_id) = {
+            let p = kernel.get_process(current_pid);
+            let npc_name = p.map(|p| p.npc.name.clone()).unwrap_or_else(|| "npcsh".to_string());
+            let team_name = kernel.team.source_dir.as_deref()
+                .and_then(|d| std::path::Path::new(d).file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("npcsh")
+                .to_string();
+            let model = p.map(|p| p.npc.resolved_model()).unwrap_or_else(|| "qwen3.5:2b".to_string());
+            let provider = p.map(|p| p.npc.resolved_provider()).unwrap_or_else(|| "ollama".to_string());
+            let conv_id = p.map(|p| p.conversation_id.clone()).unwrap_or_default();
+            (npc_name, team_name, model, provider, conv_id)
+        };
+        let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string());
+
+        let exec_result = match mode {
             Mode::Agent => {
                 if is_bash_command(&input) {
                     run_bash(&input).await;
+                    None
                 } else {
-                    // Wrap exec in cancellable task
-                    let exec_fut = kernel.exec(current_pid, &input);
-                    tokio::pin!(exec_fut);
-                    tokio::select! {
-                        result = &mut exec_fut => {
-                            match result {
-                                Ok(output) if !output.is_empty() => println!("{}", output),
-                                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                                _ => {}
-                            }
-                        }
-                        _ = interrupt_rx.recv() => {
-                            eprintln!("
-                    {YELLOW}Interrupted{RESET}");
-                            // Reset the interrupt channel
-                            let (tx, rx) = mpsc::channel::<()>(1);
-                            interrupt_rx = rx;
-                            let tx_clone = tx.clone();
-                            tokio::spawn(async move {
-                                loop {
-                                    ctrl_c().await.expect("Failed to await Ctrl+C");
-                                    let _ = tx_clone.send(()).await;
-                                }
-                            });
-                        }
-                    }
+                    Some(kernel.exec(current_pid, &input).await)
                 }
             }
             Mode::Chat => {
-                let exec_fut = kernel.exec_chat(current_pid, &input);
-                tokio::pin!(exec_fut);
-                tokio::select! {
-                    result = exec_fut => {
-                        match result {
-                            Ok(output) if !output.is_empty() => println!("{}", output),
-                            Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                            _ => {}
-                        }
-                    }
-                    _ = interrupt_rx.recv() => {
-                        eprintln!("
-                {YELLOW}Interrupted{RESET}");
-                        let (tx, rx) = mpsc::channel::<()>(1);
-                        interrupt_rx = rx;
-                        let tx_clone = tx.clone();
-                        tokio::spawn(async move {
-                            loop {
-                                ctrl_c().await.expect("Failed to await Ctrl+C");
-                                let _ = tx_clone.send(()).await;
-                            }
-                        });
-                    }
-                }
+                Some(kernel.exec_chat(current_pid, &input).await)
             }
             Mode::Cmd => {
-                if !run_bash(&input).await {
-                    let exec_fut = kernel.exec(current_pid, &input);
-                    tokio::pin!(exec_fut);
-                    tokio::select! {
-                        result = &mut exec_fut => {
-                            match result {
-                                Ok(output) if !output.is_empty() => println!("{}", output),
-                                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                                _ => {}
-                            }
-                        }
-                        _ = interrupt_rx.recv() => {
-                            eprintln!("
-                    {YELLOW}Interrupted{RESET}");
-                            let (tx, rx) = mpsc::channel::<()>(1);
-                            interrupt_rx = rx;
-                            let tx_clone = tx.clone();
-                            tokio::spawn(async move {
-                                loop {
-                                    ctrl_c().await.expect("Failed to await Ctrl+C");
-                                    let _ = tx_clone.send(()).await;
-                                }
-                            });
-                        }
+                if run_bash(&input).await {
+                    None
+                } else {
+                    Some(kernel.exec(current_pid, &input).await)
+                }
+            }
+        };
+
+        if let Some(result) = exec_result {
+            match result {
+                Ok(output) => {
+                    if !output.is_empty() {
+                        println!("\n{}", output);
                     }
+                    println!("{DIM}  [{} | {}]{RESET}", model_str, provider_str);
+
+                    let p = kernel.get_process(current_pid);
+                    let (in_tok, out_tok, cost) = p.map(|p| {
+                        (p.usage.total_input_tokens, p.usage.total_output_tokens, p.usage.total_cost_usd)
+                    }).unwrap_or((0, 0, 0.0));
+
+                    let _ = kernel.history.save_conversation_message(
+                        &conv_id, "user", &input, &cwd,
+                        Some(&model_str), Some(&provider_str),
+                        Some(&npc_name_str), Some(&team_name_str),
+                        None, None, None,
+                        Some(in_tok), None, None,
+                    );
+
+                    let _ = kernel.history.save_conversation_message(
+                        &conv_id, "assistant", &output, &cwd,
+                        Some(&model_str), Some(&provider_str),
+                        Some(&npc_name_str), Some(&team_name_str),
+                        None, None, None,
+                        Some(in_tok), Some(out_tok), Some(cost),
+                    );
+                }
+                Err(e) => {
+                    eprintln!("{RED}Error: {e}{RESET}");
                 }
             }
         }
 
         if let Some(p) = kernel.get_process(current_pid) {
+            session_input_tokens = p.usage.total_input_tokens;
+            session_output_tokens = p.usage.total_output_tokens;
+            session_cost = p.usage.total_cost_usd;
             if p.usage.total_turns > 0 {
                 eprintln!(
                     "{DIM}[tokens:{}/{} | turn:{} | cost:${:.4}]{RESET}",
@@ -603,12 +714,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Save history before shutdown
-    if let Err(e) = rl.save_history(&history_path) {
-        eprintln!("{DIM}Warning: Failed to save history: {e}{RESET}");
-    } else {
-        tracing::info!("History saved to {}", history_path);
-    }
+    // Final history save
+    let _ = std::fs::write(&history_path, history.join("\n") + "\n");
+
+    eprintln!("\n{DIM}Kernel shutting down.{RESET}");
     let s = kernel.stats();
     eprintln!(
         "{DIM}uptime: {}s | tokens: {} | cost: ${:.4}{RESET}",
@@ -617,11 +726,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Handle /set key=value commands.
 fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode) {
     let parts: Vec<&str> = rest.splitn(2, '=').collect();
     if parts.len() != 2 {
         eprintln!("Usage: /set key=value");
-        eprintln!("  model=gpt-4o  provider=openai  mode=chat");
+        eprintln!("  model=qwen3.5:2b  provider=ollama  mode=chat");
         return;
     }
     let key = parts[0].trim();
@@ -650,44 +760,103 @@ fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode
     }
 }
 
+/// Print the welcome screen.
 fn print_welcome(kernel: &Kernel) {
     let s = kernel.stats();
 
-    let blue = "\x1b[1;94m";
-    let rust = "\x1b[1;38;5;202m";
+    const BLUE: &str = "\x1b[1;94m";
+    const RUST: &str = "\x1b[1;38;5;202m";
+
+    const SHAD: &str = "\x1b[38;5;238m";
     eprintln!();
-    eprintln!("{blue}___________________________________________{RESET}");
+    eprintln!("  {BLUE}                         {RESET}{RUST}     ██╗     {RESET}");
+    eprintln!("  {BLUE}                         {RESET}{RUST}     ██║     {RESET}");
+    eprintln!("  {BLUE}█▀▀▀█╗ ██████╗  ██████╗ {RESET}{RUST}█████╗██████╗ {RESET}");
+    eprintln!("  {BLUE}██╔═██║██╔══██╗██╔════╝ {RESET}{RUST}██╔══╝██╔═██║ {RESET}");
+    eprintln!("  {BLUE}██║ ██║██║  ██║██║      {RESET}{RUST}█████╗██║ ██║ {RESET}");
+    eprintln!("  {BLUE}██║ ██║██║  ██║██║      {RESET}{RUST}╚══██║██║ ██║ {RESET}");
+    eprintln!("  {BLUE}██║ ██║██████╔╝╚██████╗ {RESET}{RUST}█████║██║ ██║ {RESET}");
+    eprintln!("  {BLUE}╚═╝ ╚═╝██╔═══╝  ╚═════╝{RESET}{RUST}╚════╝╚═╝ ╚═╝ {RESET}");
+    eprintln!("  {BLUE}       ██║              {RESET}");
+    eprintln!("  {BLUE}       ╚═╝              {RESET}");
     eprintln!();
-    eprintln!("  Welcome to {blue}npc{RESET}{rust}sh{RESET}!");
-    eprintln!("{blue}                    {RESET}{rust}        _       \\{RESET}");
-    eprintln!("{blue} _ __   _ __    ___ {RESET}{rust}  ___  | |___    \\{RESET}");
-    eprintln!("{blue}| '_ \\ | '_ \\  / __|{RESET}{rust} / __/ | |_ _|    \\{RESET}");
-    eprintln!("{blue}| | | || |_) |( |__ {RESET}{rust} \\_  \\ | | | |    //{RESET}");
-    eprintln!("{blue}|_| |_|| .__/  \\___/{RESET}{rust} |___/ |_| |_|   //{RESET}");
-    eprintln!("       {blue}|🤖|          {RESET}{rust}               //{RESET}");
-    eprintln!("       {blue}|🤖|{RESET}");
-    eprintln!("       {blue}|🤖|{RESET}");
-    eprintln!("{rust}___________________________________________{RESET}");
-    eprintln!();
-    eprintln!("  {BOLD}npcsh{RESET} v{} (rust)", env!("CARGO_PKG_VERSION"));
-    eprintln!(
-        "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",
-        s.total_processes, s.jinx_count
-    );
+    eprintln!("  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}", env!("NPCSH_VERSION"));
+    eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
     eprintln!();
 
-    eprint!("  {BOLD}Agents:{RESET} ");
-    let names: Vec<String> = kernel
-        .ps()
-        .iter()
-        .map(|p| format!("{CYAN}@{}{RESET}", p.npc.name))
-        .collect();
+    eprintln!("  {DIM}mode:{RESET} {BOLD}agent{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat");
+    eprint!("  {DIM}npcs:{RESET} ");
+    let names: Vec<String> = kernel.ps().iter().map(|p| format!("{BLUE}@{}{RESET}", p.npc.name)).collect();
     eprintln!("{}", names.join("  "));
+    eprintln!();
 
-    eprintln!("  {BOLD}Modes:{RESET}  {CYAN}/agent{RESET}  {CYAN}/chat{RESET}  {CYAN}/cmd{RESET}");
+    let mut groups: std::collections::BTreeMap<String, std::collections::BTreeMap<Option<String>, Vec<String>>> =
+        std::collections::BTreeMap::new();
+
+    for (jname, jinx) in &kernel.jinxes {
+        let (group, subdir) = if let Some(ref sp) = jinx.source_path {
+            let parts: Vec<&str> = sp.split(std::path::MAIN_SEPARATOR).collect();
+            if let Some(idx) = parts.iter().position(|&p| p == "jinxes") {
+                let remaining = &parts[idx + 1..];
+                if remaining.len() > 2 {
+                    (remaining[0].to_string(), Some(remaining[1].to_string()))
+                } else if remaining.len() > 1 {
+                    (remaining[0].to_string(), None)
+                } else {
+                    ("root".to_string(), None)
+                }
+            } else {
+                ("other".to_string(), None)
+            }
+        } else {
+            ("other".to_string(), None)
+        };
+        groups.entry(group).or_default().entry(subdir).or_default().push(jname.clone());
+    }
+
+    let group_order = ["bin", "lib", "skills", "etc", "sys", "usr", "root", "other"];
+    let mut sorted_groups: Vec<_> = groups.keys().cloned().collect();
+    sorted_groups.sort_by_key(|g| {
+        group_order.iter().position(|o| o == g).unwrap_or(99)
+    });
+
+    for group in &sorted_groups {
+        if let Some(subdirs) = groups.get(group) {
+            eprintln!("  {RUST}{group}/{RESET}");
+            if let Some(names) = subdirs.get(&None) {
+                let mut sorted = names.clone();
+                sorted.sort();
+                let line: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
+                let mut current = String::from("    ");
+                for item in &line {
+                    if current.len() + item.len() + 2 > 80 && current.trim().len() > 0 {
+                        eprintln!("{}", current);
+                        current = String::from("    ");
+                    }
+                    current.push_str(item);
+                    current.push_str("  ");
+                }
+                if current.trim().len() > 0 {
+                    eprintln!("{}", current);
+                }
+            }
+            for (sd, names) in subdirs {
+                if let Some(sd) = sd {
+                    let mut sorted = names.clone();
+                    sorted.sort();
+                    let items: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
+                    eprintln!("      {DIM}{sd}:{RESET} {}", items.join("  "));
+                }
+            }
+        }
+    }
+
+    eprintln!();
+    eprintln!("  {DIM}/jinxes for full list{RESET}");
     eprintln!();
 }
 
+/// Load ~/.npcshrc if it exists.
 fn load_npcshrc() {
     let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
     let path = std::path::Path::new(&rc_path);
@@ -715,34 +884,23 @@ fn load_npcshrc() {
     }
 }
 
-const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "nano", "vi", "emacs", "less", "more", "man"];
+// ── Terminal/Interactive command lists ──
+
+const TERMINAL_EDITORS: &[&str] = &[
+    "vim", "nvim", "nano", "vi", "emacs", "less", "more", "man",
+];
 
 const INTERACTIVE_COMMANDS: &[&str] = &[
-    "ipython",
-    "python",
-    "python3",
-    "node",
-    "irb",
-    "ghci",
-    "mysql",
-    "psql",
-    "sqlite3",
-    "redis-cli",
-    "mongo",
-    "ssh",
-    "telnet",
-    "ftp",
-    "sftp",
-    "top",
-    "htop",
-    "watch",
-    "r",
+    "ipython", "python", "python3", "node", "irb", "ghci",
+    "mysql", "psql", "sqlite3", "redis-cli", "mongo",
+    "ssh", "telnet", "ftp", "sftp", "top", "htop", "watch", "r",
 ];
 
 const SHELL_BUILTINS: &[&str] = &[
-    "cd", "pwd", "echo", "export", "source", "alias", "unalias", "history", "set", "unset", "read",
-    "eval", "exec", "exit", "return", "shift", "trap", "wait", "jobs", "fg", "bg", "kill",
-    "ulimit", "umask", "type", "hash", "true", "false",
+    "cd", "pwd", "echo", "export", "source", "alias", "unalias",
+    "history", "set", "unset", "read", "eval", "exec", "exit",
+    "return", "shift", "trap", "wait", "jobs", "fg", "bg",
+    "kill", "ulimit", "umask", "type", "hash", "true", "false",
 ];
 
 fn is_bash_command(input: &str) -> bool {
@@ -750,17 +908,13 @@ fn is_bash_command(input: &str) -> bool {
     if parts.is_empty() {
         return false;
     }
-
     let cmd = parts[0];
-
     if SHELL_BUILTINS.contains(&cmd) {
         return true;
     }
-
     if let Ok(output) = std::process::Command::new("which").arg(cmd).output() {
         return output.status.success();
     }
-
     false
 }
 
@@ -808,15 +962,580 @@ fn find_team_dir() -> String {
             return dir.clone();
         }
     }
-
     if std::path::Path::new("./npc_team").exists() {
         return "./npc_team".to_string();
     }
-
     let global = shellexpand::tilde("~/.npcsh/npc_team").to_string();
     if std::path::Path::new(&global).exists() {
         return global;
     }
-
     ".".to_string()
+}
+
+async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
+    use npcrs::npc_compiler::NPC;
+
+    let npc = NPC::from_file(npc_file)?;
+    let model = npc.resolved_model();
+    let provider = npc.resolved_provider();
+
+    if let Some(cmd) = command {
+        let system = npc.system_prompt(None);
+        let messages = vec![
+            npcrs::Message::system(system),
+            npcrs::Message::user(cmd),
+        ];
+        let response = npcrs::r#gen::get_genai_response
+            (&provider, &model, &messages, None, npc.api_url.as_deref(), None, None, None, false, None)
+            .await?;
+        if let Some(text) = response.message.content {
+            println!("{}", text);
+        }
+    } else {
+        let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+        let team_dir = find_team_dir();
+        let mut kernel = npcrs::Kernel::boot(&team_dir, &db_path)?;
+
+        if let Some(p) = kernel.get_process_mut(0) {
+            p.npc = npc;
+        }
+
+        eprintln!("\x1b[1;94m{}\x1b[0m", npc_file);
+        eprintln!("NPC: {} | model: {} | provider: {}",
+            kernel.get_process(0).map(|p| p.npc.name.as_str()).unwrap_or("?"),
+            model, provider);
+        eprintln!();
+
+        // Simple REPL without readline
+        loop {
+            print!("\x1b[35m> \x1b[0m");
+            let _ = io::stdout().flush();
+            let mut input = String::new();
+            let input = match std::io::stdin().read_line(&mut input) {
+                Ok(0) => break,
+                Ok(_) => input.trim().to_string(),
+                Err(_) => break,
+            };
+            if input.is_empty() { continue; }
+            if input == "exit" || input == "quit" { break; }
+
+            match kernel.exec(0, &input).await {
+                Ok(output) => {
+                    if !output.is_empty() {
+                        println!("\n{}", output);
+                    }
+                }
+                Err(e) => eprintln!("\x1b[31mError: {}\x1b[0m", e),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
+    use npcrs::npc_compiler::{load_jinx_from_file, execute_jinx};
+
+    let jinx = load_jinx_from_file(jinx_file)?;
+
+    let mut input_values = std::collections::HashMap::new();
+    let mut positional_idx = 0;
+
+    for arg in args {
+        if let Some((k, v)) = arg.split_once('=') {
+            input_values.insert(k.to_string(), v.to_string());
+        } else {
+            if let Some(input) = jinx.inputs.get(positional_idx) {
+                input_values.insert(input.name.clone(), arg.to_string());
+                positional_idx += 1;
+            }
+        }
+    }
+
+    let empty_jinxes = std::collections::HashMap::new();
+    let result = execute_jinx(&jinx, &input_values, &empty_jinxes).await?;
+
+    if !result.output.is_empty() {
+        println!("{}", result.output);
+    }
+
+    if !result.success {
+        if let Some(err) = result.error {
+            eprintln!("Error: {}", err);
+        }
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+async fn exec_nsh_file(script_path: &str) -> Result<()> {
+    let team_dir = find_team_dir();
+    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+
+    let content = std::fs::read_to_string(script_path)?;
+
+    let raw_lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = raw_lines.into_iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+
+    let mut variables: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut last_output = String::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let line = line.to_string();
+
+        let cmd_to_exec = if let Some((var_name, var_expr)) = line.trim().strip_prefix('$').and_then(|rest| {
+            if let Some(eq_pos) = rest.find('=') {
+                let vname = rest[..eq_pos].trim().to_string();
+                let expr = rest[eq_pos + 1..].trim().to_string();
+                if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return Some((vname, expr));
+                }
+            }
+            None
+        }) {
+            Some((var_name, var_expr))
+        } else {
+            None
+        };
+
+        let mut substituted = if let Some((_, ref expr)) = cmd_to_exec {
+            expr.clone()
+        } else {
+            line.clone()
+        };
+        for (k, v) in &variables {
+            substituted = substituted.replace(&format!("${}", k), v);
+            substituted = substituted.replace(&format!("${{{}}}", k), v);
+        }
+        substituted = substituted.replace("$_", &last_output);
+
+        let cmd = if substituted.starts_with('!') {
+            substituted[1..].trim().to_string()
+        } else {
+            substituted
+        };
+
+        match kernel.exec(0, &cmd).await {
+            Ok(output) => {
+                last_output = output.clone();
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+                if let Some((var_name, _)) = cmd_to_exec {
+                    variables.insert(var_name, output);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error on line {}: {}", i + 1, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn init_team(dir: &str) -> Result<()> {
+    let dir = std::path::Path::new(dir).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(dir));
+    let team_dir = dir.join("npc_team");
+
+    if team_dir.exists() && std::fs::read_dir(&team_dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
+        eprintln!("npc_team/ already exists at {}", team_dir.display());
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(team_dir.join("jinxes")).unwrap();
+
+    let global_jinxes = shellexpand::tilde("~/.npcsh/npc_team/jinxes/lib").to_string();
+    let dest_lib = team_dir.join("jinxes").join("lib");
+    if std::path::Path::new(&global_jinxes).is_dir() && !dest_lib.exists() {
+        fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
+            std::fs::create_dir_all(dst).ok();
+            if let Ok(entries) = std::fs::read_dir(src) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let dest = dst.join(entry.file_name());
+                    if path.is_dir() {
+                        copy_dir(&path, &dest);
+                    } else {
+                        std::fs::copy(&path, &dest).ok();
+                    }
+                }
+            }
+        }
+        copy_dir(std::path::Path::new(&global_jinxes), &dest_lib);
+    }
+
+    let forenpc = "#!/usr/bin/env npc\n\
+name: forenpc\n\
+primary_directive: You are the team coordinator. Delegate tasks to specialists and synthesize results.\n\
+model: qwen3.5:2b\n\
+provider: ollama\n\
+jinxes:\n\
+  - sh\n\
+  - python\n\
+  - edit_file\n\
+  - load_file\n\
+  - web_search\n\
+  - file_search\n\
+  - delegate\n";
+    let fp = team_dir.join("forenpc.npc");
+    std::fs::write(&fp, forenpc).unwrap();
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fp, std::fs::Permissions::from_mode(0o755)).ok();
+    }
+
+    let coder = "#!/usr/bin/env npc\n\
+name: coder\n\
+primary_directive: You are a coding specialist. Write, debug, and refactor code. Run tests. Edit files.\n\
+model: qwen3.5:2b\n\
+provider: ollama\n\
+jinxes:\n\
+  - sh\n\
+  - python\n\
+  - edit_file\n\
+  - load_file\n\
+  - file_search\n";
+    let cp = team_dir.join("coder.npc");
+    std::fs::write(&cp, coder).unwrap();
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cp, std::fs::Permissions::from_mode(0o755)).ok();
+    }
+
+    let ctx = "context: A development team.\nforenpc: forenpc\n";
+    std::fs::write(team_dir.join("team.ctx"), ctx).unwrap();
+
+    println!("Created npc_team/ at {}", team_dir.display());
+    println!("  forenpc.npc — coordinator");
+    println!("  coder.npc   — coding specialist");
+    println!("  team.ctx    — team context");
+    println!();
+    println!("Run npcsh to start, or:");
+    println!("  npc {} 'what can you do?'", fp.display());
+    println!("  npc {} 'list all TODO comments in this project'", cp.display());
+
+    Ok(())
+}
+
+/// Raw-mode readline with immediate Ctrl-E/Ctrl-O handling.
+fn readline_raw(
+    prompt: &str,
+    history: &mut Vec<String>,
+    history_index: &mut Option<usize>,
+    helper: &NpcHelper,
+    kernel: &mut Kernel,
+    current_pid: u32,
+) -> io::Result<Option<String>> {
+    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+    use crossterm::terminal;
+
+    // If stdin is not a TTY, fall back to plain read_line
+    if terminal::enable_raw_mode().is_err() {
+        print!("{}", prompt);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        match std::io::stdin().read_line(&mut input) {
+            Ok(0) => return Ok(None),
+            Ok(_) => return Ok(Some(input)),
+            Err(e) => return Err(e),
+        }
+    }
+
+    let mut buf = String::new();
+    let mut pos: usize = 0;
+
+    print!("{}", prompt);
+    io::stdout().flush()?;
+
+    let mut tab_matches: Vec<Completion> = Vec::new();
+    let mut tab_index: usize = 0;
+
+    let result = loop {
+        if crossterm::event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            match c {
+                                'c' => {
+                                    print!("\r\n");
+                                    // Ctrl-C: clear and give fresh prompt
+                                    buf.clear();
+                                    pos = 0;
+                                    redraw_prompt(prompt, &buf, pos);
+                                }
+                                'd' => {
+                                    if buf.is_empty() {
+                                        print!("\r\n");
+                                        break Ok(None);
+                                    }
+                                }
+                                'a' => {
+                                    if pos > 0 {
+                                        print!("{}", "\x1b[D".repeat(pos));
+                                        pos = 0;
+                                        io::stdout().flush()?;
+                                    }
+                                }
+                                'e' => {
+                                    print!("\r\n");
+                                    if let Some(p) = kernel.get_process(current_pid) {
+                                        if let Some(ref t) = p.last_thinking {
+                                            println!("{BOLD}═══ Thinking ═══{RESET}");
+                                            println!("{}", t);
+                                            println!("{BOLD}═{RESET}");
+                                        } else {
+                                            println!("{DIM}(no thinking content available){RESET}");
+                                        }
+                                    }
+                                    redraw_prompt(prompt, &buf, pos);
+                                }
+                                'o' => {
+                                    print!("\r\n");
+                                    if let Some(p) = kernel.get_process(current_pid) {
+                                        let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> = Vec::new();
+                                        for m in p.messages.iter().rev().take(10) {
+                                            if let Some(ref tc) = m.tool_calls {
+                                                for t in tc.iter().rev() {
+                                                    tool_calls.push(t);
+                                                }
+                                            }
+                                        }
+                                        if tool_calls.is_empty() {
+                                            println!("{DIM}(no tool calls in recent messages){RESET}");
+                                        } else {
+                                            let total = tool_calls.len().min(5);
+                                            println!("{BOLD}═══ Last {} tool call{} ═══{RESET}", total, if total > 1 { "s" } else { "" });
+                                            for (i, tc) in tool_calls.iter().take(5).enumerate() {
+                                                println!("  [{}/{}] {CYAN}{}{RESET}", i + 1, total, tc.function.name);
+                                                let args = &tc.function.arguments;
+                                                let preview = if args.len() > 200 {
+                                                    format!("{}…", &args[..200])
+                                                } else {
+                                                    args.to_string()
+                                                };
+                                                println!("    {}", preview);
+                                            }
+                                            println!("{BOLD}═{RESET}");
+                                            let tc_model = p.npc.resolved_model();
+                                            let tc_provider = p.npc.resolved_provider();
+                                            println!("{DIM}  [{} | {}]{RESET}", tc_model, tc_provider);
+                                        }
+                                    }
+                                    redraw_prompt(prompt, &buf, pos);
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            tab_matches.clear();
+                            if pos == buf.len() {
+                                buf.push(c);
+                                print!("{}", c);
+                                pos += 1;
+                            } else {
+                                buf.insert(pos, c);
+                                pos += 1;
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        tab_matches.clear();
+                        if pos > 0 {
+                            buf.remove(pos - 1);
+                            pos -= 1;
+                            if pos == buf.len() {
+                                print!("\x08 \x08");
+                            } else {
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::Delete => {
+                        tab_matches.clear();
+                        if pos < buf.len() {
+                            buf.remove(pos);
+                            redraw_prompt(prompt, &buf, pos);
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        print!("\r\n");
+                        break Ok(Some(buf));
+                    }
+                    KeyCode::Left => {
+                        if pos > 0 {
+                            pos -= 1;
+                            print!("\x1b[D");
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::Right => {
+                        if pos < buf.len() {
+                            pos += 1;
+                            print!("\x1b[C");
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::Home => {
+                        if pos > 0 {
+                            print!("{}", "\x1b[D".repeat(pos));
+                            pos = 0;
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::End => {
+                        if pos < buf.len() {
+                            print!("{}", "\x1b[C".repeat(buf.len() - pos));
+                            pos = buf.len();
+                            io::stdout().flush()?;
+                        }
+                    }
+                    KeyCode::Up => {
+                        if let Some(idx) = *history_index {
+                            if idx > 0 {
+                                let new_idx = idx - 1;
+                                *history_index = Some(new_idx);
+                                buf = history[new_idx].clone();
+                                pos = buf.len();
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                        } else if !history.is_empty() {
+                            let new_idx = history.len() - 1;
+                            *history_index = Some(new_idx);
+                            buf = history[new_idx].clone();
+                            pos = buf.len();
+                            redraw_prompt(prompt, &buf, pos);
+                        }
+                    }
+                    KeyCode::Down => {
+                        if let Some(idx) = *history_index {
+                            if idx + 1 < history.len() {
+                                let new_idx = idx + 1;
+                                *history_index = Some(new_idx);
+                                buf = history[new_idx].clone();
+                                pos = buf.len();
+                                redraw_prompt(prompt, &buf, pos);
+                            } else {
+                                *history_index = None;
+                                buf.clear();
+                                pos = 0;
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                        }
+                    }
+                    KeyCode::Tab => {
+                        if tab_matches.is_empty() {
+                            let (word_start, matches) = helper.complete(&buf, pos);
+                            if matches.len() == 1 {
+                                let replacement = &matches[0].replacement;
+                                let new_buf = format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                                pos = word_start + replacement.len();
+                                buf = new_buf;
+                                redraw_prompt(prompt, &buf, pos);
+                                tab_matches.clear();
+                            } else if !matches.is_empty() {
+                                tab_matches = matches;
+                                tab_index = 0;
+                                print!("\r\n");
+                                for m in &tab_matches {
+                                    println!("  {}", m.display);
+                                }
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                        } else {
+                            if !tab_matches.is_empty() {
+                                tab_index = (tab_index + 1) % tab_matches.len();
+                                let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                                let replacement = &tab_matches[tab_index].replacement;
+                                let new_buf = format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                                pos = word_start + replacement.len();
+                                buf = new_buf;
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    };
+
+    let _ = terminal::disable_raw_mode();
+    result
+}
+
+/// Strip ANSI escape sequences so we can measure display width.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if let Some(next) = chars.next() {
+                if next == '[' {
+                    while let Some(ch) = chars.next() {
+                        if ch.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Count display columns for a string (accounts for multi-byte chars roughly).
+fn display_width(s: &str) -> usize {
+    strip_ansi(s).chars().count()
+}
+
+fn redraw_prompt(prompt: &str, buf: &str, pos: usize) {
+    let term_width = crossterm::terminal::size().unwrap_or((80, 24)).0 as usize;
+    let prompt_w = display_width(prompt);
+    let buf_w = display_width(buf);
+
+    // How many lines from the start of the prompt to the cursor?
+    let cursor_line = (prompt_w + pos) / term_width;
+    // How many lines does the whole prompt+buf occupy?
+    let total_lines = std::cmp::max(1, (prompt_w + buf_w + term_width - 1) / term_width);
+
+    // Move to the first line of the prompt (column 0)
+    for _ in 0..cursor_line {
+        print!("\x1b[F"); // Cursor Previous Line → column 1 of previous line
+    }
+    print!("\r");
+
+    // Clear every line the prompt+input occupies
+    for i in 0..total_lines {
+        print!("\x1b[2K"); // clear entire line
+        if i + 1 < total_lines {
+            print!("\x1b[E"); // Cursor Next Line → column 1 of next line
+        }
+    }
+
+    // Move back to the first line
+    for _ in 0..total_lines.saturating_sub(1) {
+        print!("\x1b[F");
+    }
+    print!("\r");
+
+    // Reprint
+    print!("{}", prompt);
+    print!("{}", buf);
+    if pos < buf.len() {
+        print!("{}", "\x1b[D".repeat(buf.len() - pos));
+    }
+    let _ = io::stdout().flush();
 }

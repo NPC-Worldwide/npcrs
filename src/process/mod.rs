@@ -37,6 +37,12 @@ pub struct Process {
     pub exit_code: Option<i32>,
 
     pub conversation_id: String,
+
+    pub think: Option<bool>,
+
+    pub last_streamed: bool,
+
+    pub last_thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,6 +211,9 @@ impl Process {
             last_active: now,
             exit_code: None,
             conversation_id: crate::memory::start_new_conversation(),
+            think: None,
+            last_streamed: false,
+            last_thinking: None,
         }
     }
 

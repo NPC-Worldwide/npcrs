@@ -219,6 +219,8 @@ async fn chat(
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
+                    thinking: None,
+                    reasoning_content: None,
                 });
                 let usage = resp.usage.as_ref().map(|u| serde_json::json!({"input_tokens": u.prompt_tokens, "output_tokens": u.completion_tokens}));
                 Json(
@@ -338,8 +340,12 @@ async fn search(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
 
 async fn generate_image(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let prompt = body["prompt"].as_str().unwrap_or("");
-    let model = body["model"].as_str().unwrap_or("dall-e-3");
-    let provider = body["provider"].as_str().unwrap_or("openai");
+    let Some(model) = body["model"].as_str() else {
+        return Json(serde_json::json!({"error": "Missing model parameter"}));
+    };
+    let Some(provider) = body["provider"].as_str() else {
+        return Json(serde_json::json!({"error": "Missing provider parameter"}));
+    };
     match crate::llm_funcs::gen_image(prompt, Some(model), Some(provider), None, 1024, 1024, None)
         .await
     {
@@ -354,7 +360,9 @@ async fn generate_image(Json(body): Json<serde_json::Value>) -> impl IntoRespons
 
 async fn tts(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let text = body["text"].as_str().unwrap_or("");
-    let engine = body["engine"].as_str().unwrap_or("openai");
+    let Some(engine) = body["engine"].as_str() else {
+        return Json(serde_json::json!({"error": "Missing engine parameter"}));
+    };
     let voice = body["voice"].as_str();
     match crate::r#gen::audio_gen::text_to_speech(text, engine, voice, None).await {
         Ok(audio) => {
@@ -367,7 +375,9 @@ async fn tts(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
 }
 
 async fn stt(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
-    let engine = body["engine"].as_str().unwrap_or("openai");
+    let Some(engine) = body["engine"].as_str() else {
+        return Json(serde_json::json!({"error": "Missing engine parameter"}));
+    };
     if let Some(b64) = body["audio"].as_str() {
         use base64::Engine;
         match base64::engine::general_purpose::STANDARD.decode(b64) {
@@ -672,11 +682,11 @@ async fn api_command(
         let m = npc
             .as_ref()
             .map(|n| n.resolved_model())
-            .unwrap_or_else(|| "qwen3.5:2b".into());
+            .unwrap_or_default();
         let p = npc
             .as_ref()
             .map(|n| n.resolved_provider())
-            .unwrap_or_else(|| "ollama".into());
+            .unwrap_or_default();
         (npc, m, p)
     };
     match crate::llm_funcs::get_llm_response(

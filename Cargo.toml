@@ -1,6 +1,6 @@
 [package]
 name = "npcrs"
-version = "0.0.0"
+version = "0.1.15"
 edition = "2024"
 description = "Rust core for the NPC system — agent kernel, jinx executor, LLM client"
 license = "MIT"
@@ -95,7 +95,7 @@ zip = "2"
 
 # URL encoding for web search
 urlencoding = "2"
-rustyline = "17.0.2"
+crossterm = "0.28"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 dotenvy = "0.15.7"
 

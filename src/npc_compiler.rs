@@ -316,14 +316,14 @@ impl NPC {
         self.model
             .clone()
             .or_else(|| std::env::var("NPCSH_CHAT_MODEL").ok())
-            .unwrap_or_else(|| "qwen3.5:2b".to_string())
+            .unwrap_or_default()
     }
 
     pub fn resolved_provider(&self) -> String {
         self.provider
             .clone()
             .or_else(|| std::env::var("NPCSH_CHAT_PROVIDER").ok())
-            .unwrap_or_else(|| "ollama".to_string())
+            .unwrap_or_default()
     }
 
     /// Mirrors npcpy NPC.get_llm_response — full signature.
@@ -1579,7 +1579,7 @@ pub async fn execute_jinx_with_npc(
     })
 }
 
-fn jinx_needs_tty(jinx: &Jinx) -> bool {
+pub fn jinx_needs_tty(jinx: &Jinx) -> bool {
     for step in &jinx.steps {
         let code = &step.code;
         if code.contains("termios")
@@ -1977,6 +1977,8 @@ if result:
 
 #[derive(Debug, Clone)]
 pub struct Team {
+    pub name: String,
+
     pub npcs: HashMap<String, NPC>,
 
     pub forenpc: Option<String>,
@@ -2001,6 +2003,7 @@ pub struct Team {
 impl Default for Team {
     fn default() -> Self {
         Self {
+            name: "npcsh".to_string(),
             npcs: HashMap::new(),
             forenpc: None,
             jinxes: HashMap::new(),
