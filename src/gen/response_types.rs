@@ -13,6 +13,12 @@ pub struct Message {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 impl Message {
@@ -23,6 +29,8 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            thinking: None,
+            reasoning_content: None,
         }
     }
 
@@ -33,6 +41,8 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            thinking: None,
+            reasoning_content: None,
         }
     }
 
@@ -43,6 +53,8 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            thinking: None,
+            reasoning_content: None,
         }
     }
 
@@ -53,6 +65,8 @@ impl Message {
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
             name: None,
+            thinking: None,
+            reasoning_content: None,
         }
     }
 }

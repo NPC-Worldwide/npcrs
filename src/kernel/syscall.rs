@@ -54,36 +54,18 @@ pub async fn execute_syscall(
         args.len()
     );
 
+    let needs_tty = npc_compiler::jinx_needs_tty(jinx);
     let has_python_steps = jinx.steps.iter().any(|s| s.engine == "python");
 
-    let result = if has_python_steps {
-        if let Some(ref mut daemon) = kernel.python_daemon {
-            let cmd = if args.is_empty() {
-                format!("/{}", jinx_name)
-            } else {
-                let args_str: Vec<String> = args
-                    .iter()
-                    .map(|(k, v)| {
-                        if v.is_empty() {
-                            k.clone()
-                        } else {
-                            format!("{}={}", k, v)
-                        }
-                    })
-                    .collect();
-                format!("/{} {}", jinx_name, args_str.join(" "))
-            };
-            let output = daemon.execute(&cmd, None).await?;
-            crate::npc_compiler::JinxResult {
-                output,
-                context: HashMap::new(),
-                success: true,
-                error: None,
-            }
-        } else {
-            let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
-            npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
-        }
+    let result = if needs_tty {
+        // TUI jinxes must run inline in the foreground process to access the terminal.
+        let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
+        npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
+    } else if has_python_steps {
+        // Run Python jinxes inline (subprocess) so TUI prompts work
+        // correctly. The daemon is reserved for LLM calls only.
+        let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
+        npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
     } else {
         let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
         npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?

@@ -160,6 +160,8 @@ pub fn flatten_tool_messages(messages: &[Message]) -> Vec<Message> {
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+                thinking: None,
+                reasoning_content: None,
             });
         } else if msg.role == "tool" {
             let name = msg.name.as_deref().unwrap_or("tool");
@@ -170,6 +172,8 @@ pub fn flatten_tool_messages(messages: &[Message]) -> Vec<Message> {
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+                thinking: None,
+                reasoning_content: None,
             });
         } else {
             flat.push(msg.clone());

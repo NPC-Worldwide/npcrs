@@ -72,6 +72,42 @@ npc ./npc_team/jinxes/lib/sh.jinx bash_command="echo hi"
 npc init
 ```
 
+## Persistent socket daemon (recommended)
+
+By default `npcsh` spawns a Python daemon subprocess per session. For faster startup and concurrent request handling, run the daemon as a persistent service.
+
+### macOS (launchd)
+
+```bash
+# Install the launchd plist
+cp scripts/com.npcworldwide.npcsh-daemon.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.npcworldwide.npcsh-daemon.plist
+launchctl start com.npcworldwide.npcsh-daemon
+
+# Stop / unload
+launchctl stop com.npcworldwide.npcsh-daemon
+launchctl unload ~/Library/LaunchAgents/com.npcworldwide.npcsh-daemon.plist
+```
+
+Logs: `tail -f /tmp/npcsh-daemon.log`
+
+### Linux (systemd user service)
+
+```bash
+# Install the user service
+mkdir -p ~/.config/systemd/user
+cp scripts/npcsh-daemon.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now npcsh-daemon
+
+# Stop
+systemctl --user stop npcsh-daemon
+```
+
+Logs: `journalctl --user -u npcsh-daemon -f`
+
+The Rust client connects to `~/.npcsh/daemon.sock` automatically; if the socket is missing it falls back to subprocess mode. Override the socket path with the `NPCSH_DAEMON_SOCKET` environment variable.
+
 ## Cross-compile for Android
 
 ```bash

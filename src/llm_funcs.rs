@@ -1851,10 +1851,9 @@ pub async fn gen_image(
                 .unwrap_or_else(|| npc.resolved_provider()),
         )
     } else {
-        (
-            model.unwrap_or("dall-e-3").to_string(),
-            provider.unwrap_or("openai").to_string(),
-        )
+        return Err(NpcError::LlmRequest(
+            "gen_image requires model and provider (or an NPC)".into()
+        ));
     };
     crate::r#gen::generate_image(prompt, &m, &p, api_key, width, height).await
 }
