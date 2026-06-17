@@ -144,6 +144,8 @@ mod tests {
                 }]),
                 tool_call_id: None,
                 name: None,
+                reasoning_content: None,
+                thinking: None,
             },
         ];
         let clean = sanitize_messages(msgs);
@@ -168,6 +170,8 @@ mod tests {
                 }]),
                 tool_call_id: None,
                 name: None,
+                reasoning_content: None,
+                thinking: None,
             },
             Message::tool_result("tc_1", "output"),
         ];

@@ -57,12 +57,13 @@ pub struct PythonDaemon {
 }
 
 enum DaemonMode {
+    #[cfg(unix)]
     Socket {
         writer: tokio::net::unix::OwnedWriteHalf,
         reader: tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
     },
     Subprocess {
-        child: tokio::process::Child,
+        child: Box<tokio::process::Child>,
         stdin: tokio::process::ChildStdin,
         stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
         _stderr_task: tokio::task::JoinHandle<()>,
@@ -116,6 +117,7 @@ impl PythonDaemon {
     /// Connect to a persistent Unix socket daemon.
     /// Returns `Ok(Self)` if the socket is live, otherwise returns an error
     /// so the caller can decide whether to start a daemon.
+    #[cfg(unix)]
     pub async fn connect() -> Result<Self> {
         use tokio::io::AsyncBufReadExt;
 
@@ -162,12 +164,19 @@ impl PythonDaemon {
         })
     }
 
+    /// On non-Unix platforms, socket mode is not supported.
+    #[cfg(not(unix))]
+    pub async fn connect() -> Result<Self> {
+        Err(NpcError::Other(
+            "Unix socket daemon mode is not supported on this platform".into(),
+        ))
+    }
+
     /// Try to connect to a persistent Unix socket daemon.  Falls back to
     /// spawning a subprocess if the socket is not available.
     pub async fn spawn(_team_dir: &str, _db_path: &str) -> Result<Self> {
-        match Self::connect().await {
-            Ok(d) => return Ok(d),
-            Err(_) => {}
+        if let Ok(d) = Self::connect().await {
+            return Ok(d);
         }
         Self::spawn_subprocess(_team_dir, _db_path).await
     }
@@ -313,7 +322,7 @@ for line in sys.stdin:
 
         Ok(Self {
             mode: DaemonMode::Subprocess {
-                child,
+                child: Box::new(child),
                 stdin,
                 stdout: BufReader::new(stdout),
                 _stderr_task: stderr_task,
@@ -364,6 +373,7 @@ for line in sys.stdin:
         line.push('\n');
 
         match &mut self.mode {
+            #[cfg(unix)]
             DaemonMode::Socket { writer, reader } => {
                 writer
                     .write_all(line.as_bytes())
@@ -457,6 +467,7 @@ for line in sys.stdin:
         line.push('\n');
 
         match &mut self.mode {
+            #[cfg(unix)]
             DaemonMode::Socket { writer, reader } => {
                 writer
                     .write_all(line.as_bytes())
@@ -906,10 +917,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
             // Save assistant response to DB
             let tool_calls_json = if let Some(ref tc) = response.message.tool_calls {
-                match serde_json::to_string(tc) {
-                    Ok(s) => Some(s),
-                    Err(_) => None,
-                }
+                serde_json::to_string(tc).ok()
             } else {
                 None
             };
