@@ -113,62 +113,66 @@ pub struct LlmResponse {
 }
 
 impl PythonDaemon {
+    /// Connect to a persistent Unix socket daemon.
+    /// Returns `Ok(Self)` if the socket is live, otherwise returns an error
+    /// so the caller can decide whether to start a daemon.
+    pub async fn connect() -> Result<Self> {
+        use tokio::io::{AsyncBufReadExt};
+
+        let socket_path = Self::socket_path();
+        let stream = tokio::net::UnixStream::connect(&socket_path)
+            .await
+            .map_err(|e| {
+                NpcError::Other(format!(
+                    "Failed to connect to daemon socket at {}: {}",
+                    socket_path.display(),
+                    e
+                ))
+            })?;
+        let (read_half, write_half) = stream.into_split();
+        let mut reader = tokio::io::BufReader::new(read_half);
+
+        let mut ready_line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_line(&mut ready_line),
+        )
+        .await
+        .map_err(|_| {
+            NpcError::Other(format!(
+                "Daemon on {} never sent ready signal",
+                socket_path.display()
+            ))
+        })??;
+
+        if !ready_line.contains("ready") {
+            return Err(NpcError::Other(format!(
+                "Daemon on {} sent unexpected ready line: {}",
+                socket_path.display(),
+                ready_line.trim()
+            )));
+        }
+
+        tracing::info!("Connected to npcsh daemon on {}", socket_path.display());
+        Ok(Self {
+            mode: DaemonMode::Socket {
+                writer: write_half,
+                reader,
+            },
+        })
+    }
+
     /// Try to connect to a persistent Unix socket daemon.  Falls back to
     /// spawning a subprocess if the socket is not available.
     pub async fn spawn(_team_dir: &str, _db_path: &str) -> Result<Self> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
-        // ── Try socket mode first ──
-        let socket_path = Self::socket_path();
-        match tokio::net::UnixStream::connect(&socket_path).await {
-            Ok(stream) => {
-            let (read_half, write_half) = stream.into_split();
-            let mut reader = tokio::io::BufReader::new(read_half);
-
-            // Wait for the ready signal from the daemon
-            let mut ready_line = String::new();
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                reader.read_line(&mut ready_line),
-            )
-            .await
-            .map_err(|_| {
-                NpcError::Other(format!(
-                    "Daemon on {} never sent ready signal",
-                    socket_path.display()
-                ))
-            })??;
-
-            if !ready_line.contains("ready") {
-                return Err(NpcError::Other(format!(
-                    "Daemon on {} sent unexpected ready line: {}",
-                    socket_path.display(),
-                    ready_line.trim()
-                )));
-            }
-
-            tracing::info!("Connected to npcsh daemon on {}", socket_path.display());
-            return Ok(Self {
-                mode: DaemonMode::Socket {
-                    writer: write_half,
-                    reader,
-                },
-            });
+        match Self::connect().await {
+            Ok(d) => return Ok(d),
+            Err(_) => {}
         }
-        Err(e) => {
-            tracing::warn!(
-                "Failed to connect to daemon socket at {}: {} — falling back to subprocess",
-                socket_path.display(),
-                e
-            );
-        }
-    }
-
-        // ── Fallback: spawn subprocess ──
         Self::spawn_subprocess(_team_dir, _db_path).await
     }
 
-    fn socket_path() -> std::path::PathBuf {
+    pub fn socket_path() -> std::path::PathBuf {
         // Single canonical path so the Python daemon and Rust client agree.
         // Can be overridden with NPCSH_DAEMON_SOCKET for custom setups.
         if let Some(path) = std::env::var_os("NPCSH_DAEMON_SOCKET") {
