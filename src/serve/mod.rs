@@ -679,10 +679,7 @@ async fn api_command(
     let (npc, model, provider) = {
         let s = state.lock().await;
         let npc = s.team.get_npc(&s.active_npc_name).cloned();
-        let m = npc
-            .as_ref()
-            .map(|n| n.resolved_model())
-            .unwrap_or_default();
+        let m = npc.as_ref().map(|n| n.resolved_model()).unwrap_or_default();
         let p = npc
             .as_ref()
             .map(|n| n.resolved_provider())

@@ -113,62 +113,66 @@ pub struct LlmResponse {
 }
 
 impl PythonDaemon {
+    /// Connect to a persistent Unix socket daemon.
+    /// Returns `Ok(Self)` if the socket is live, otherwise returns an error
+    /// so the caller can decide whether to start a daemon.
+    pub async fn connect() -> Result<Self> {
+        use tokio::io::AsyncBufReadExt;
+
+        let socket_path = Self::socket_path();
+        let stream = tokio::net::UnixStream::connect(&socket_path)
+            .await
+            .map_err(|e| {
+                NpcError::Other(format!(
+                    "Failed to connect to daemon socket at {}: {}",
+                    socket_path.display(),
+                    e
+                ))
+            })?;
+        let (read_half, write_half) = stream.into_split();
+        let mut reader = tokio::io::BufReader::new(read_half);
+
+        let mut ready_line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_line(&mut ready_line),
+        )
+        .await
+        .map_err(|_| {
+            NpcError::Other(format!(
+                "Daemon on {} never sent ready signal",
+                socket_path.display()
+            ))
+        })??;
+
+        if !ready_line.contains("ready") {
+            return Err(NpcError::Other(format!(
+                "Daemon on {} sent unexpected ready line: {}",
+                socket_path.display(),
+                ready_line.trim()
+            )));
+        }
+
+        tracing::info!("Connected to npcsh daemon on {}", socket_path.display());
+        Ok(Self {
+            mode: DaemonMode::Socket {
+                writer: write_half,
+                reader,
+            },
+        })
+    }
+
     /// Try to connect to a persistent Unix socket daemon.  Falls back to
     /// spawning a subprocess if the socket is not available.
     pub async fn spawn(_team_dir: &str, _db_path: &str) -> Result<Self> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
-        // ── Try socket mode first ──
-        let socket_path = Self::socket_path();
-        match tokio::net::UnixStream::connect(&socket_path).await {
-            Ok(stream) => {
-            let (read_half, write_half) = stream.into_split();
-            let mut reader = tokio::io::BufReader::new(read_half);
-
-            // Wait for the ready signal from the daemon
-            let mut ready_line = String::new();
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                reader.read_line(&mut ready_line),
-            )
-            .await
-            .map_err(|_| {
-                NpcError::Other(format!(
-                    "Daemon on {} never sent ready signal",
-                    socket_path.display()
-                ))
-            })??;
-
-            if !ready_line.contains("ready") {
-                return Err(NpcError::Other(format!(
-                    "Daemon on {} sent unexpected ready line: {}",
-                    socket_path.display(),
-                    ready_line.trim()
-                )));
-            }
-
-            tracing::info!("Connected to npcsh daemon on {}", socket_path.display());
-            return Ok(Self {
-                mode: DaemonMode::Socket {
-                    writer: write_half,
-                    reader,
-                },
-            });
+        match Self::connect().await {
+            Ok(d) => return Ok(d),
+            Err(_) => {}
         }
-        Err(e) => {
-            tracing::warn!(
-                "Failed to connect to daemon socket at {}: {} — falling back to subprocess",
-                socket_path.display(),
-                e
-            );
-        }
-    }
-
-        // ── Fallback: spawn subprocess ──
         Self::spawn_subprocess(_team_dir, _db_path).await
     }
 
-    fn socket_path() -> std::path::PathBuf {
+    pub fn socket_path() -> std::path::PathBuf {
         // Single canonical path so the Python daemon and Rust client agree.
         // Can be overridden with NPCSH_DAEMON_SOCKET for custom setups.
         if let Some(path) = std::env::var_os("NPCSH_DAEMON_SOCKET") {
@@ -194,7 +198,13 @@ impl PythonDaemon {
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
-                .map_err(|e| NpcError::Other(format!("Failed to spawn Python daemon ({}): {}", script.display(), e)))?
+                .map_err(|e| {
+                    NpcError::Other(format!(
+                        "Failed to spawn Python daemon ({}): {}",
+                        script.display(),
+                        e
+                    ))
+                })?
         } else {
             // Fallback inline script (legacy, rarely used)
             Command::new("python3")
@@ -330,7 +340,10 @@ for line in sys.stdin:
             }
         }
         if let Ok(output) = std::process::Command::new("python3")
-            .args(["-c", "import npcsh, os; print(os.path.dirname(os.path.abspath(npcsh.__file__)))",])
+            .args([
+                "-c",
+                "import npcsh, os; print(os.path.dirname(os.path.abspath(npcsh.__file__)))",
+            ])
             .output()
         {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -385,12 +398,13 @@ for line in sys.stdin:
                                 let _ = std::io::Write::flush(&mut std::io::stderr());
                             } else if trimmed.starts_with('{') {
                                 // JSON response line
-                                let resp: LlmResponse = serde_json::from_str(trimmed)
-                                    .map_err(|e| NpcError::Other(format!(
-                                        "Socket LLM parse: {} (raw: {})",
-                                        e,
-                                        trimmed
-                                    )))?;
+                                let resp: LlmResponse =
+                                    serde_json::from_str(trimmed).map_err(|e| {
+                                        NpcError::Other(format!(
+                                            "Socket LLM parse: {} (raw: {})",
+                                            e, trimmed
+                                        ))
+                                    })?;
                                 return Ok(resp);
                             }
                             // Silently drop other noise
@@ -418,7 +432,11 @@ for line in sys.stdin:
                     .map_err(|e| NpcError::Other(format!("Daemon LLM read: {}", e)))?;
 
                 let resp: LlmResponse = serde_json::from_str(&resp_line).map_err(|e| {
-                    NpcError::Other(format!("Daemon LLM parse: {} (raw: {})", e, resp_line.trim()))
+                    NpcError::Other(format!(
+                        "Daemon LLM parse: {} (raw: {})",
+                        e,
+                        resp_line.trim()
+                    ))
                 })?;
 
                 Ok(resp)
@@ -459,10 +477,10 @@ for line in sys.stdin:
                         .map_err(|e| NpcError::Other(format!("Socket read: {}", e)))?;
                     let trimmed = resp_line.trim_end_matches('\n');
                     if trimmed.starts_with('{') {
-                        let resp: serde_json::Value = serde_json::from_str(trimmed)
-                            .map_err(|e| NpcError::Other(format!(
-                                "Socket parse: {} (raw: {})", e, trimmed
-                            )))?;
+                        let resp: serde_json::Value =
+                            serde_json::from_str(trimmed).map_err(|e| {
+                                NpcError::Other(format!("Socket parse: {} (raw: {})", e, trimmed))
+                            })?;
                         return Ok(resp
                             .get("output")
                             .and_then(|v| v.as_str())
@@ -622,7 +640,19 @@ impl Kernel {
         use crate::r#gen::cost::calculate_cost;
         use crate::r#gen::sanitize::sanitize_messages;
 
-        let (model, provider, system, api_url, api_key, npc_name, active_npc, tool_defs, executors, think_mode, conv_id) = {
+        let (
+            model,
+            provider,
+            system,
+            api_url,
+            api_key,
+            npc_name,
+            active_npc,
+            tool_defs,
+            executors,
+            think_mode,
+            conv_id,
+        ) = {
             let process = self
                 .processes
                 .get_mut(&pid)
@@ -660,11 +690,13 @@ impl Kernel {
                         .contains(&t.function.name)
                 });
                 (
-                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex, think_mode, conv_id,
+                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex,
+                    think_mode, conv_id,
                 )
             } else {
                 (
-                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex, think_mode, conv_id,
+                    model, provider, system, api_url, api_key, npc_name, active_npc, td, ex,
+                    think_mode, conv_id,
                 )
             }
         };
@@ -773,24 +805,28 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     think: think_mode,
                     attachments: None,
                 };
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
-                    daemon.llm(&req),
-                ).await {
+                match tokio::time::timeout(std::time::Duration::from_secs(120), daemon.llm(&req))
+                    .await
+                {
                     Ok(Ok(llm_resp)) => {
                         if !llm_resp.ok {
-                            let err = llm_resp.error.clone().unwrap_or_else(|| "unknown daemon error".to_string());
+                            let err = llm_resp
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "unknown daemon error".to_string());
                             return Err(NpcError::Other(format!("Daemon LLM error: {}", err)));
                         }
                         let tc = llm_resp.tool_calls.as_ref().map(|tcs| {
-                            tcs.iter().map(|tc| crate::r#gen::ToolCall {
-                                id: tc.id.clone(),
-                                r#type: tc.r#type.clone(),
-                                function: crate::r#gen::ToolCallFunction {
-                                    name: tc.function.name.clone(),
-                                    arguments: tc.function.arguments.clone(),
-                                },
-                            }).collect::<Vec<_>>()
+                            tcs.iter()
+                                .map(|tc| crate::r#gen::ToolCall {
+                                    id: tc.id.clone(),
+                                    r#type: tc.r#type.clone(),
+                                    function: crate::r#gen::ToolCallFunction {
+                                        name: tc.function.name.clone(),
+                                        arguments: tc.function.arguments.clone(),
+                                    },
+                                })
+                                .collect::<Vec<_>>()
                         });
                         // Track streamed state from daemon
                         {
@@ -818,7 +854,9 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         return Err(NpcError::Other(format!("Daemon LLM call failed: {}", e)));
                     }
                     Err(_) => {
-                        return Err(NpcError::Other("Daemon LLM call timed out after 120s".into()));
+                        return Err(NpcError::Other(
+                            "Daemon LLM call timed out after 120s".into(),
+                        ));
                     }
                 }
             } else {
@@ -849,11 +887,20 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 let process = self.processes.get_mut(&pid).unwrap();
                 process.messages.push(Message::user(input));
                 let _ = self.history.save_conversation_message(
-                    &conv_id, "user", input, &cwd,
-                    Some(&model), Some(&provider),
-                    Some(&npc_name), Some(&self.team.name),
-                    None, None, None,
-                    None, None, None,
+                    &conv_id,
+                    "user",
+                    input,
+                    &cwd,
+                    Some(&model),
+                    Some(&provider),
+                    Some(&npc_name),
+                    Some(&self.team.name),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                 );
             }
 
@@ -867,16 +914,23 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 None
             };
             let _ = self.history.save_conversation_message(
-                &conv_id, "assistant",
+                &conv_id,
+                "assistant",
                 response.message.content.as_deref().unwrap_or(""),
                 &cwd,
-                Some(&model), Some(&provider),
-                Some(&npc_name), Some(&self.team.name),
+                Some(&model),
+                Some(&provider),
+                Some(&npc_name),
+                Some(&self.team.name),
                 tool_calls_json.as_deref(),
-                None, None,
+                None,
+                None,
                 response.usage.as_ref().map(|u| u.prompt_tokens),
                 response.usage.as_ref().map(|u| u.completion_tokens),
-                response.usage.as_ref().map(|u| calculate_cost(&model, u.prompt_tokens, u.completion_tokens)),
+                response
+                    .usage
+                    .as_ref()
+                    .map(|u| calculate_cost(&model, u.prompt_tokens, u.completion_tokens)),
             );
 
             // Print actual thinking / reasoning content when present.
@@ -914,7 +968,9 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             .find(|td| td.function.name == tc.function.name)
                             .and_then(|td| td.function.parameters.get("properties"))
                             .and_then(|p: &serde_json::Value| p.as_object())
-                            .map(|obj: &serde_json::Map<String, serde_json::Value>| obj.keys().cloned().collect())
+                            .map(|obj: &serde_json::Map<String, serde_json::Value>| {
+                                obj.keys().cloned().collect()
+                            })
                             .unwrap_or_default();
                         let filtered = if let Ok(parsed) =
                             serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
@@ -1022,12 +1078,20 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
                     // Save tool result to DB
                     let _ = self.history.save_conversation_message(
-                        &conv_id, "tool", &tool_result, &cwd,
-                        Some(&model), Some(&provider),
-                        Some(&npc_name), Some(&self.team.name),
-                        None, None,
+                        &conv_id,
+                        "tool",
+                        &tool_result,
+                        &cwd,
+                        Some(&model),
+                        Some(&provider),
+                        Some(&npc_name),
+                        Some(&self.team.name),
+                        None,
+                        None,
                         Some(tc_id),
-                        None, None, None,
+                        None,
+                        None,
+                        None,
                     );
                 }
             } else {
@@ -1422,4 +1486,3 @@ impl std::fmt::Display for KernelStats {
         )
     }
 }
-

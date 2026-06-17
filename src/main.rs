@@ -26,7 +26,11 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
             || (bytes[0] == b'B' && bytes[1] == b'M')
             || raw.starts_with("data:image/")
             || {
-                let non_printable = bytes.iter().take(100).filter(|&&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t').count();
+                let non_printable = bytes
+                    .iter()
+                    .take(100)
+                    .filter(|&&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t')
+                    .count();
                 non_printable > 10
             }
     } else {
@@ -34,18 +38,26 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
     };
 
     if is_binary {
-        let ext = if bytes.len() > 4 && bytes[0] == 0x89 { ".png" }
-            else if bytes.len() > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 { ".jpg" }
-            else if raw.starts_with("data:image/png") { ".png" }
-            else if raw.starts_with("data:image/jpeg") || raw.starts_with("data:image/jpg") { ".jpg" }
-            else { ".bin" };
+        let ext = if bytes.len() > 4 && bytes[0] == 0x89 {
+            ".png"
+        } else if bytes.len() > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 {
+            ".jpg"
+        } else if raw.starts_with("data:image/png") {
+            ".png"
+        } else if raw.starts_with("data:image/jpeg") || raw.starts_with("data:image/jpg") {
+            ".jpg"
+        } else {
+            ".bin"
+        };
 
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join(format!("npcsh_paste_{}{}", std::process::id(), ext));
         let write_data = if raw.starts_with("data:image/") {
             if let Some((_, data)) = raw.split_once(',') {
                 use base64::Engine;
-                base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default()
+                base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap_or_default()
             } else {
                 raw.as_bytes().to_vec()
             }
@@ -61,7 +73,10 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
     let line_count = raw.lines().count();
     let char_count = raw.len();
     if line_count > 3 || char_count > 500 {
-        eprintln!("\x1b[90m[pasted: {} lines, {} chars]\x1b[0m", line_count, char_count);
+        eprintln!(
+            "\x1b[90m[pasted: {} lines, {} chars]\x1b[0m",
+            line_count, char_count
+        );
         return (raw.to_string(), Some(raw.to_string()));
     }
 
@@ -83,9 +98,8 @@ struct Completion {
 impl NpcHelper {
     fn new(npc_names: Vec<String>, jinx_names: Vec<String>) -> Self {
         let mut commands = vec![
-            "/ps", "/stats", "/help", "/quit", "/exit", "/clear",
-            "/agent", "/chat", "/cmd", "/switch", "/kill", "/jinxes",
-            "/set", "/history",
+            "/ps", "/stats", "/help", "/quit", "/exit", "/clear", "/agent", "/chat", "/cmd",
+            "/switch", "/kill", "/jinxes", "/set", "/history",
         ]
         .into_iter()
         .map(String::from)
@@ -95,7 +109,10 @@ impl NpcHelper {
             commands.push(format!("/{}", j));
         }
 
-        Self { npc_names, commands }
+        Self {
+            npc_names,
+            commands,
+        }
     }
 
     fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Completion>) {
@@ -190,7 +207,11 @@ async fn main() -> Result<()> {
     // Check if invoked as `npc` or `npc-jinx` (shebang mode)
     let invoked_as = std::env::args()
         .next()
-        .and_then(|a| std::path::Path::new(&a).file_name().map(|f| f.to_string_lossy().to_string()))
+        .and_then(|a| {
+            std::path::Path::new(&a)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+        })
         .unwrap_or_default();
 
     let args: Vec<String> = std::env::args().collect();
@@ -251,9 +272,10 @@ async fn main() -> Result<()> {
     // Spawn Python daemon in background
     let daemon_team = team_dir.clone();
     let daemon_db = db_path.clone();
-    let daemon_handle = tokio::spawn(async move {
-        npcrs::kernel::PythonDaemon::spawn(&daemon_team, &daemon_db).await
-    });
+    let daemon_handle =
+        tokio::spawn(
+            async move { npcrs::kernel::PythonDaemon::spawn(&daemon_team, &daemon_db).await },
+        );
 
     // Set up raw-mode input
     let npc_names: Vec<String> = kernel.ps().iter().map(|p| p.npc.name.clone()).collect();
@@ -364,7 +386,7 @@ async fn main() -> Result<()> {
                 let _ = std::fs::write(&history_path, history.join("\n") + "\n");
                 line
             }
-            Ok(None) => break,  // Ctrl-D = EOF, exit gracefully
+            Ok(None) => break, // Ctrl-D = EOF, exit gracefully
             Err(e) => {
                 eprintln!("Error: {}", e);
                 break;
@@ -391,9 +413,13 @@ async fn main() -> Result<()> {
                     };
                     println!(
                         "  {CYAN}@{:<12}{RESET} pid:{:<3} {state_color}{:?}{RESET}  tokens:{}/{} cost:${:.4} turns:{}",
-                        p.npc.name, p.pid, p.state,
-                        p.usage.total_input_tokens, p.usage.total_output_tokens,
-                        p.usage.total_cost_usd, p.usage.total_turns,
+                        p.npc.name,
+                        p.pid,
+                        p.state,
+                        p.usage.total_input_tokens,
+                        p.usage.total_output_tokens,
+                        p.usage.total_cost_usd,
+                        p.usage.total_turns,
                     );
                 }
                 true
@@ -403,14 +429,23 @@ async fn main() -> Result<()> {
                 let s = kernel.stats();
                 println!(
                     "{BOLD}Kernel Stats{RESET}\n  uptime: {}s\n  processes: {} (run:{} blk:{} dead:{})\n  tokens: {} (in+out)\n  cost: ${:.4}\n  jinxes: {}",
-                    s.uptime_secs, s.total_processes, s.running, s.blocked, s.dead,
-                    s.total_tokens, s.total_cost_usd, s.jinx_count,
+                    s.uptime_secs,
+                    s.total_processes,
+                    s.running,
+                    s.blocked,
+                    s.dead,
+                    s.total_tokens,
+                    s.total_cost_usd,
+                    s.jinx_count,
                 );
                 true
             }
 
             "/help" => {
-                println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("NPCSH_VERSION"));
+                println!(
+                    "{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n",
+                    env!("NPCSH_VERSION")
+                );
                 println!("{BOLD}Modes:{RESET}");
                 println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
                 println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
@@ -461,7 +496,14 @@ async fn main() -> Result<()> {
                 sorted.sort();
                 println!("{BOLD}Available jinxes ({}):{RESET}", sorted.len());
                 for chunk in sorted.chunks(6) {
-                    println!("  {}", chunk.iter().map(|n| format!("{CYAN}/{n}{RESET}")).collect::<Vec<_>>().join("  "));
+                    println!(
+                        "  {}",
+                        chunk
+                            .iter()
+                            .map(|n| format!("{CYAN}/{n}{RESET}"))
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    );
                 }
                 true
             }
@@ -505,7 +547,10 @@ async fn main() -> Result<()> {
                     let name = kernel.get_process(current_pid).map(|p| p.npc.name.clone());
                     kernel.kill(current_pid, 0).ok();
                     current_pid = 0;
-                    eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
+                    eprintln!(
+                        "{YELLOW}Killed @{} — switched to init{RESET}",
+                        name.unwrap_or_default()
+                    );
                 }
                 true
             }
@@ -629,18 +674,29 @@ async fn main() -> Result<()> {
 
         let (npc_name_str, team_name_str, model_str, provider_str, conv_id) = {
             let p = kernel.get_process(current_pid);
-            let npc_name = p.map(|p| p.npc.name.clone()).unwrap_or_else(|| "npcsh".to_string());
-            let team_name = kernel.team.source_dir.as_deref()
+            let npc_name = p
+                .map(|p| p.npc.name.clone())
+                .unwrap_or_else(|| "npcsh".to_string());
+            let team_name = kernel
+                .team
+                .source_dir
+                .as_deref()
                 .and_then(|d| std::path::Path::new(d).file_name())
                 .and_then(|n| n.to_str())
                 .unwrap_or("npcsh")
                 .to_string();
-            let model = p.map(|p| p.npc.resolved_model()).unwrap_or_else(|| "qwen3.5:2b".to_string());
-            let provider = p.map(|p| p.npc.resolved_provider()).unwrap_or_else(|| "ollama".to_string());
+            let model = p
+                .map(|p| p.npc.resolved_model())
+                .unwrap_or_else(|| "qwen3.5:2b".to_string());
+            let provider = p
+                .map(|p| p.npc.resolved_provider())
+                .unwrap_or_else(|| "ollama".to_string());
             let conv_id = p.map(|p| p.conversation_id.clone()).unwrap_or_default();
             (npc_name, team_name, model, provider, conv_id)
         };
-        let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string());
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
 
         let exec_result = match mode {
             Mode::Agent => {
@@ -651,9 +707,7 @@ async fn main() -> Result<()> {
                     Some(kernel.exec(current_pid, &input).await)
                 }
             }
-            Mode::Chat => {
-                Some(kernel.exec_chat(current_pid, &input).await)
-            }
+            Mode::Chat => Some(kernel.exec_chat(current_pid, &input).await),
             Mode::Cmd => {
                 if run_bash(&input).await {
                     None
@@ -672,24 +726,48 @@ async fn main() -> Result<()> {
                     println!("{DIM}  [{} | {}]{RESET}", model_str, provider_str);
 
                     let p = kernel.get_process(current_pid);
-                    let (in_tok, out_tok, cost) = p.map(|p| {
-                        (p.usage.total_input_tokens, p.usage.total_output_tokens, p.usage.total_cost_usd)
-                    }).unwrap_or((0, 0, 0.0));
+                    let (in_tok, out_tok, cost) = p
+                        .map(|p| {
+                            (
+                                p.usage.total_input_tokens,
+                                p.usage.total_output_tokens,
+                                p.usage.total_cost_usd,
+                            )
+                        })
+                        .unwrap_or((0, 0, 0.0));
 
                     let _ = kernel.history.save_conversation_message(
-                        &conv_id, "user", &input, &cwd,
-                        Some(&model_str), Some(&provider_str),
-                        Some(&npc_name_str), Some(&team_name_str),
-                        None, None, None,
-                        Some(in_tok), None, None,
+                        &conv_id,
+                        "user",
+                        &input,
+                        &cwd,
+                        Some(&model_str),
+                        Some(&provider_str),
+                        Some(&npc_name_str),
+                        Some(&team_name_str),
+                        None,
+                        None,
+                        None,
+                        Some(in_tok),
+                        None,
+                        None,
                     );
 
                     let _ = kernel.history.save_conversation_message(
-                        &conv_id, "assistant", &output, &cwd,
-                        Some(&model_str), Some(&provider_str),
-                        Some(&npc_name_str), Some(&team_name_str),
-                        None, None, None,
-                        Some(in_tok), Some(out_tok), Some(cost),
+                        &conv_id,
+                        "assistant",
+                        &output,
+                        &cwd,
+                        Some(&model_str),
+                        Some(&provider_str),
+                        Some(&npc_name_str),
+                        Some(&team_name_str),
+                        None,
+                        None,
+                        None,
+                        Some(in_tok),
+                        Some(out_tok),
+                        Some(cost),
                     );
                 }
                 Err(e) => {
@@ -780,18 +858,30 @@ fn print_welcome(kernel: &Kernel) {
     eprintln!("  {BLUE}       ██║              {RESET}");
     eprintln!("  {BLUE}       ╚═╝              {RESET}");
     eprintln!();
-    eprintln!("  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}", env!("NPCSH_VERSION"));
-    eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
+    eprintln!(
+        "  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}",
+        env!("NPCSH_VERSION")
+    );
+    eprintln!(
+        "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",
+        s.total_processes, s.jinx_count
+    );
     eprintln!();
 
     eprintln!("  {DIM}mode:{RESET} {BOLD}agent{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat");
     eprint!("  {DIM}npcs:{RESET} ");
-    let names: Vec<String> = kernel.ps().iter().map(|p| format!("{BLUE}@{}{RESET}", p.npc.name)).collect();
+    let names: Vec<String> = kernel
+        .ps()
+        .iter()
+        .map(|p| format!("{BLUE}@{}{RESET}", p.npc.name))
+        .collect();
     eprintln!("{}", names.join("  "));
     eprintln!();
 
-    let mut groups: std::collections::BTreeMap<String, std::collections::BTreeMap<Option<String>, Vec<String>>> =
-        std::collections::BTreeMap::new();
+    let mut groups: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<Option<String>, Vec<String>>,
+    > = std::collections::BTreeMap::new();
 
     for (jname, jinx) in &kernel.jinxes {
         let (group, subdir) = if let Some(ref sp) = jinx.source_path {
@@ -811,14 +901,17 @@ fn print_welcome(kernel: &Kernel) {
         } else {
             ("other".to_string(), None)
         };
-        groups.entry(group).or_default().entry(subdir).or_default().push(jname.clone());
+        groups
+            .entry(group)
+            .or_default()
+            .entry(subdir)
+            .or_default()
+            .push(jname.clone());
     }
 
     let group_order = ["bin", "lib", "skills", "etc", "sys", "usr", "root", "other"];
     let mut sorted_groups: Vec<_> = groups.keys().cloned().collect();
-    sorted_groups.sort_by_key(|g| {
-        group_order.iter().position(|o| o == g).unwrap_or(99)
-    });
+    sorted_groups.sort_by_key(|g| group_order.iter().position(|o| o == g).unwrap_or(99));
 
     for group in &sorted_groups {
         if let Some(subdirs) = groups.get(group) {
@@ -886,21 +979,34 @@ fn load_npcshrc() {
 
 // ── Terminal/Interactive command lists ──
 
-const TERMINAL_EDITORS: &[&str] = &[
-    "vim", "nvim", "nano", "vi", "emacs", "less", "more", "man",
-];
+const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "nano", "vi", "emacs", "less", "more", "man"];
 
 const INTERACTIVE_COMMANDS: &[&str] = &[
-    "ipython", "python", "python3", "node", "irb", "ghci",
-    "mysql", "psql", "sqlite3", "redis-cli", "mongo",
-    "ssh", "telnet", "ftp", "sftp", "top", "htop", "watch", "r",
+    "ipython",
+    "python",
+    "python3",
+    "node",
+    "irb",
+    "ghci",
+    "mysql",
+    "psql",
+    "sqlite3",
+    "redis-cli",
+    "mongo",
+    "ssh",
+    "telnet",
+    "ftp",
+    "sftp",
+    "top",
+    "htop",
+    "watch",
+    "r",
 ];
 
 const SHELL_BUILTINS: &[&str] = &[
-    "cd", "pwd", "echo", "export", "source", "alias", "unalias",
-    "history", "set", "unset", "read", "eval", "exec", "exit",
-    "return", "shift", "trap", "wait", "jobs", "fg", "bg",
-    "kill", "ulimit", "umask", "type", "hash", "true", "false",
+    "cd", "pwd", "echo", "export", "source", "alias", "unalias", "history", "set", "unset", "read",
+    "eval", "exec", "exit", "return", "shift", "trap", "wait", "jobs", "fg", "bg", "kill",
+    "ulimit", "umask", "type", "hash", "true", "false",
 ];
 
 fn is_bash_command(input: &str) -> bool {
@@ -981,13 +1087,20 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
 
     if let Some(cmd) = command {
         let system = npc.system_prompt(None);
-        let messages = vec![
-            npcrs::Message::system(system),
-            npcrs::Message::user(cmd),
-        ];
-        let response = npcrs::r#gen::get_genai_response
-            (&provider, &model, &messages, None, npc.api_url.as_deref(), None, None, None, false, None)
-            .await?;
+        let messages = vec![npcrs::Message::system(system), npcrs::Message::user(cmd)];
+        let response = npcrs::r#gen::get_genai_response(
+            &provider,
+            &model,
+            &messages,
+            None,
+            npc.api_url.as_deref(),
+            None,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await?;
         if let Some(text) = response.message.content {
             println!("{}", text);
         }
@@ -1001,9 +1114,15 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
         }
 
         eprintln!("\x1b[1;94m{}\x1b[0m", npc_file);
-        eprintln!("NPC: {} | model: {} | provider: {}",
-            kernel.get_process(0).map(|p| p.npc.name.as_str()).unwrap_or("?"),
-            model, provider);
+        eprintln!(
+            "NPC: {} | model: {} | provider: {}",
+            kernel
+                .get_process(0)
+                .map(|p| p.npc.name.as_str())
+                .unwrap_or("?"),
+            model,
+            provider
+        );
         eprintln!();
 
         // Simple REPL without readline
@@ -1016,8 +1135,12 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
                 Ok(_) => input.trim().to_string(),
                 Err(_) => break,
             };
-            if input.is_empty() { continue; }
-            if input == "exit" || input == "quit" { break; }
+            if input.is_empty() {
+                continue;
+            }
+            if input == "exit" || input == "quit" {
+                break;
+            }
 
             match kernel.exec(0, &input).await {
                 Ok(output) => {
@@ -1034,7 +1157,7 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
 }
 
 async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
-    use npcrs::npc_compiler::{load_jinx_from_file, execute_jinx};
+    use npcrs::npc_compiler::{execute_jinx, load_jinx_from_file};
 
     let jinx = load_jinx_from_file(jinx_file)?;
 
@@ -1077,7 +1200,8 @@ async fn exec_nsh_file(script_path: &str) -> Result<()> {
     let content = std::fs::read_to_string(script_path)?;
 
     let raw_lines: Vec<&str> = content.lines().collect();
-    let lines: Vec<&str> = raw_lines.into_iter()
+    let lines: Vec<&str> = raw_lines
+        .into_iter()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
@@ -1088,16 +1212,17 @@ async fn exec_nsh_file(script_path: &str) -> Result<()> {
     for (i, line) in lines.iter().enumerate() {
         let line = line.to_string();
 
-        let cmd_to_exec = if let Some((var_name, var_expr)) = line.trim().strip_prefix('$').and_then(|rest| {
-            if let Some(eq_pos) = rest.find('=') {
-                let vname = rest[..eq_pos].trim().to_string();
-                let expr = rest[eq_pos + 1..].trim().to_string();
-                if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return Some((vname, expr));
+        let cmd_to_exec = if let Some((var_name, var_expr)) =
+            line.trim().strip_prefix('$').and_then(|rest| {
+                if let Some(eq_pos) = rest.find('=') {
+                    let vname = rest[..eq_pos].trim().to_string();
+                    let expr = rest[eq_pos + 1..].trim().to_string();
+                    if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        return Some((vname, expr));
+                    }
                 }
-            }
-            None
-        }) {
+                None
+            }) {
             Some((var_name, var_expr))
         } else {
             None
@@ -1141,10 +1266,16 @@ async fn exec_nsh_file(script_path: &str) -> Result<()> {
 }
 
 fn init_team(dir: &str) -> Result<()> {
-    let dir = std::path::Path::new(dir).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(dir));
+    let dir = std::path::Path::new(dir)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(dir));
     let team_dir = dir.join("npc_team");
 
-    if team_dir.exists() && std::fs::read_dir(&team_dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
+    if team_dir.exists()
+        && std::fs::read_dir(&team_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+    {
         eprintln!("npc_team/ already exists at {}", team_dir.display());
         return Ok(());
     }
@@ -1186,7 +1317,8 @@ jinxes:\n\
   - delegate\n";
     let fp = team_dir.join("forenpc.npc");
     std::fs::write(&fp, forenpc).unwrap();
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fp, std::fs::Permissions::from_mode(0o755)).ok();
     }
@@ -1204,7 +1336,8 @@ jinxes:\n\
   - file_search\n";
     let cp = team_dir.join("coder.npc");
     std::fs::write(&cp, coder).unwrap();
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&cp, std::fs::Permissions::from_mode(0o755)).ok();
     }
@@ -1219,7 +1352,10 @@ jinxes:\n\
     println!();
     println!("Run npcsh to start, or:");
     println!("  npc {} 'what can you do?'", fp.display());
-    println!("  npc {} 'list all TODO comments in this project'", cp.display());
+    println!(
+        "  npc {} 'list all TODO comments in this project'",
+        cp.display()
+    );
 
     Ok(())
 }
@@ -1300,7 +1436,8 @@ fn readline_raw(
                                 'o' => {
                                     print!("\r\n");
                                     if let Some(p) = kernel.get_process(current_pid) {
-                                        let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> = Vec::new();
+                                        let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> =
+                                            Vec::new();
                                         for m in p.messages.iter().rev().take(10) {
                                             if let Some(ref tc) = m.tool_calls {
                                                 for t in tc.iter().rev() {
@@ -1309,12 +1446,23 @@ fn readline_raw(
                                             }
                                         }
                                         if tool_calls.is_empty() {
-                                            println!("{DIM}(no tool calls in recent messages){RESET}");
+                                            println!(
+                                                "{DIM}(no tool calls in recent messages){RESET}"
+                                            );
                                         } else {
                                             let total = tool_calls.len().min(5);
-                                            println!("{BOLD}═══ Last {} tool call{} ═══{RESET}", total, if total > 1 { "s" } else { "" });
+                                            println!(
+                                                "{BOLD}═══ Last {} tool call{} ═══{RESET}",
+                                                total,
+                                                if total > 1 { "s" } else { "" }
+                                            );
                                             for (i, tc) in tool_calls.iter().take(5).enumerate() {
-                                                println!("  [{}/{}] {CYAN}{}{RESET}", i + 1, total, tc.function.name);
+                                                println!(
+                                                    "  [{}/{}] {CYAN}{}{RESET}",
+                                                    i + 1,
+                                                    total,
+                                                    tc.function.name
+                                                );
                                                 let args = &tc.function.arguments;
                                                 let preview = if args.len() > 200 {
                                                     format!("{}…", &args[..200])
@@ -1326,7 +1474,10 @@ fn readline_raw(
                                             println!("{BOLD}═{RESET}");
                                             let tc_model = p.npc.resolved_model();
                                             let tc_provider = p.npc.resolved_provider();
-                                            println!("{DIM}  [{} | {}]{RESET}", tc_model, tc_provider);
+                                            println!(
+                                                "{DIM}  [{} | {}]{RESET}",
+                                                tc_model, tc_provider
+                                            );
                                         }
                                     }
                                     redraw_prompt(prompt, &buf, pos);
@@ -1438,7 +1589,8 @@ fn readline_raw(
                             let (word_start, matches) = helper.complete(&buf, pos);
                             if matches.len() == 1 {
                                 let replacement = &matches[0].replacement;
-                                let new_buf = format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                                let new_buf =
+                                    format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
                                 redraw_prompt(prompt, &buf, pos);
@@ -1457,7 +1609,8 @@ fn readline_raw(
                                 tab_index = (tab_index + 1) % tab_matches.len();
                                 let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
                                 let replacement = &tab_matches[tab_index].replacement;
-                                let new_buf = format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                                let new_buf =
+                                    format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
                                 redraw_prompt(prompt, &buf, pos);
