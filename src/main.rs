@@ -121,8 +121,7 @@ impl NpcHelper {
 
         let mut matches = Vec::new();
 
-        if word.starts_with('@') {
-            let prefix = &word[1..];
+        if let Some(prefix) = word.strip_prefix('@') {
             for name in &self.npc_names {
                 if name.starts_with(prefix) {
                     matches.push(Completion {
@@ -145,6 +144,7 @@ impl NpcHelper {
         (word_start, matches)
     }
 
+    #[allow(dead_code)]
     fn hint(&self, line: &str, pos: usize) -> Option<String> {
         if pos != line.len() {
             return None;
@@ -152,17 +152,26 @@ impl NpcHelper {
         let word_start = line.rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[word_start..];
 
-        if word.starts_with('/') && word.len() > 1 {
+        if let Some(prefix) = word.strip_prefix('/') {
+            if prefix.is_empty() {
+                return None;
+            }
             for cmd in &self.commands {
-                if cmd.starts_with(word) && cmd.len() > word.len() {
-                    return Some(cmd[word.len()..].to_string());
+                if let Some(suffix) = cmd.strip_prefix(prefix)
+                    && !suffix.is_empty()
+                {
+                    return Some(suffix.to_string());
                 }
             }
-        } else if word.starts_with('@') && word.len() > 1 {
-            let prefix = &word[1..];
+        } else if let Some(prefix) = word.strip_prefix('@') {
+            if prefix.is_empty() {
+                return None;
+            }
             for name in &self.npc_names {
-                if name.starts_with(prefix) && name.len() > prefix.len() {
-                    return Some(name[prefix.len()..].to_string());
+                if let Some(suffix) = name.strip_prefix(prefix)
+                    && !suffix.is_empty()
+                {
+                    return Some(suffix.to_string());
                 }
             }
         }
@@ -217,46 +226,47 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     // npc <file.npc|file.jinx|init> [args...]
-    if invoked_as == "npc" {
-        if let Some(file) = args.get(1) {
-            if file == "init" {
-                let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
-                return init_team(dir);
-            } else if file.ends_with(".jinx") {
-                let jinx_args: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
-                return exec_jinx_file(file, &jinx_args).await;
-            } else if file.ends_with(".npc") {
-                return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
-            }
+    if invoked_as == "npc"
+        && let Some(file) = args.get(1)
+    {
+        if file == "init" {
+            let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+            return init_team(dir);
+        } else if file.ends_with(".jinx") {
+            let jinx_args: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
+            return exec_jinx_file(file, &jinx_args).await;
+        } else if file.ends_with(".npc") {
+            return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
         }
     }
 
     // npcsh script.nsh — execute .nsh file
-    if let Some(file) = args.get(1) {
-        if file.ends_with(".nsh") && !file.starts_with('-') {
-            return exec_nsh_file(file).await;
-        }
+    if let Some(file) = args.get(1)
+        && file.ends_with(".nsh")
+        && !file.starts_with('-')
+    {
+        return exec_nsh_file(file).await;
     }
 
     // Check for -c flag
-    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
-        if let Some(command) = args.get(pos + 1) {
-            let team_dir = find_team_dir();
-            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
-            let mut kernel = Kernel::boot(&team_dir, &db_path)?;
-            match kernel.exec(0, command).await {
-                Ok(output) => {
-                    if !output.is_empty() {
-                        println!("{}", output);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
+    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command")
+        && let Some(command) = args.get(pos + 1)
+    {
+        let team_dir = find_team_dir();
+        let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+        let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+        match kernel.exec(0, command).await {
+            Ok(output) => {
+                if !output.is_empty() {
+                    println!("{}", output);
                 }
             }
-            return Ok(());
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
+        return Ok(());
     }
 
     // Find team directory
@@ -302,22 +312,14 @@ async fn main() -> Result<()> {
     let daemon_handle = std::sync::Arc::new(tokio::sync::Mutex::new(Some(daemon_handle)));
 
     loop {
-        if kernel.python_daemon.is_none() {
-            let mut guard = daemon_handle.try_lock();
-            if let Ok(ref mut opt) = guard {
-                if let Some(handle) = opt.as_mut() {
-                    if handle.is_finished() {
-                        if let Some(h) = opt.take() {
-                            match h.await {
-                                Ok(Ok(daemon)) => {
-                                    kernel.python_daemon = Some(daemon);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
+        if kernel.python_daemon.is_none()
+            && let Ok(ref mut opt) = daemon_handle.try_lock()
+            && let Some(handle) = opt.as_mut()
+            && handle.is_finished()
+            && let Some(h) = opt.take()
+            && let Ok(Ok(daemon)) = h.await
+        {
+            kernel.python_daemon = Some(daemon);
         }
 
         // Build prompt
@@ -570,8 +572,8 @@ async fn main() -> Result<()> {
         }
 
         // @npc delegation or switch
-        if input.starts_with('@') {
-            let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
+        if let Some(rest) = input.strip_prefix('@') {
+            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
             let target = parts[0];
 
             if let Some(command) = parts.get(1) {
@@ -595,8 +597,8 @@ async fn main() -> Result<()> {
         }
 
         // /slash commands → try as jinx
-        if input.starts_with('/') {
-            let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
+        if let Some(rest) = input.strip_prefix('/') {
+            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
             let cmd_name = parts[0];
             let args_str = parts.get(1).unwrap_or(&"");
 
@@ -611,10 +613,8 @@ async fn main() -> Result<()> {
                             has_kv = true;
                         }
                     }
-                    if !has_kv {
-                        if let Some(first_input) = kernel.jinxes[cmd_name].inputs.first() {
-                            args.insert(first_input.name.clone(), args_str.to_string());
-                        }
+                    if !has_kv && let Some(first_input) = kernel.jinxes[cmd_name].inputs.first() {
+                        args.insert(first_input.name.clone(), args_str.to_string());
                     }
                 }
 
@@ -845,7 +845,6 @@ fn print_welcome(kernel: &Kernel) {
     const BLUE: &str = "\x1b[1;94m";
     const RUST: &str = "\x1b[1;38;5;202m";
 
-    const SHAD: &str = "\x1b[38;5;238m";
     eprintln!();
     eprintln!("  {BLUE}                         {RESET}{RUST}     ██╗     {RESET}");
     eprintln!("  {BLUE}                         {RESET}{RUST}     ██║     {RESET}");
@@ -922,14 +921,14 @@ fn print_welcome(kernel: &Kernel) {
                 let line: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
                 let mut current = String::from("    ");
                 for item in &line {
-                    if current.len() + item.len() + 2 > 80 && current.trim().len() > 0 {
+                    if current.len() + item.len() + 2 > 80 && !current.trim().is_empty() {
                         eprintln!("{}", current);
                         current = String::from("    ");
                     }
                     current.push_str(item);
                     current.push_str("  ");
                 }
-                if current.trim().len() > 0 {
+                if !current.trim().is_empty() {
                     eprintln!("{}", current);
                 }
             }
@@ -1063,10 +1062,10 @@ fn run_interactive(input: &str) {
 
 fn find_team_dir() -> String {
     let args: Vec<String> = std::env::args().collect();
-    if let Some(pos) = args.iter().position(|a| a == "--team") {
-        if let Some(dir) = args.get(pos + 1) {
-            return dir.clone();
-        }
+    if let Some(pos) = args.iter().position(|a| a == "--team")
+        && let Some(dir) = args.get(pos + 1)
+    {
+        return dir.clone();
     }
     if std::path::Path::new("./npc_team").exists() {
         return "./npc_team".to_string();
@@ -1239,8 +1238,8 @@ async fn exec_nsh_file(script_path: &str) -> Result<()> {
         }
         substituted = substituted.replace("$_", &last_output);
 
-        let cmd = if substituted.starts_with('!') {
-            substituted[1..].trim().to_string()
+        let cmd = if let Some(rest) = substituted.strip_prefix('!') {
+            rest.trim().to_string()
         } else {
             substituted
         };
@@ -1363,7 +1362,7 @@ jinxes:\n\
 /// Raw-mode readline with immediate Ctrl-E/Ctrl-O handling.
 fn readline_raw(
     prompt: &str,
-    history: &mut Vec<String>,
+    history: &mut [String],
     history_index: &mut Option<usize>,
     helper: &NpcHelper,
     kernel: &mut Kernel,
@@ -1394,231 +1393,225 @@ fn readline_raw(
     let mut tab_index: usize = 0;
 
     let result = loop {
-        if crossterm::event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char(c) => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            match c {
-                                'c' => {
+        if crossterm::event::poll(std::time::Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char(c) => {
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match c {
+                            'c' => {
+                                print!("\r\n");
+                                // Ctrl-C: clear and give fresh prompt
+                                buf.clear();
+                                pos = 0;
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                            'd' => {
+                                if buf.is_empty() {
                                     print!("\r\n");
-                                    // Ctrl-C: clear and give fresh prompt
-                                    buf.clear();
+                                    break Ok(None);
+                                }
+                            }
+                            'a' => {
+                                if pos > 0 {
+                                    print!("{}", "\x1b[D".repeat(pos));
                                     pos = 0;
-                                    redraw_prompt(prompt, &buf, pos);
+                                    io::stdout().flush()?;
                                 }
-                                'd' => {
-                                    if buf.is_empty() {
-                                        print!("\r\n");
-                                        break Ok(None);
+                            }
+                            'e' => {
+                                print!("\r\n");
+                                if let Some(p) = kernel.get_process(current_pid) {
+                                    if let Some(ref t) = p.last_thinking {
+                                        println!("{BOLD}═══ Thinking ═══{RESET}");
+                                        println!("{}", t);
+                                        println!("{BOLD}═{RESET}");
+                                    } else {
+                                        println!("{DIM}(no thinking content available){RESET}");
                                     }
                                 }
-                                'a' => {
-                                    if pos > 0 {
-                                        print!("{}", "\x1b[D".repeat(pos));
-                                        pos = 0;
-                                        io::stdout().flush()?;
-                                    }
-                                }
-                                'e' => {
-                                    print!("\r\n");
-                                    if let Some(p) = kernel.get_process(current_pid) {
-                                        if let Some(ref t) = p.last_thinking {
-                                            println!("{BOLD}═══ Thinking ═══{RESET}");
-                                            println!("{}", t);
-                                            println!("{BOLD}═{RESET}");
-                                        } else {
-                                            println!("{DIM}(no thinking content available){RESET}");
-                                        }
-                                    }
-                                    redraw_prompt(prompt, &buf, pos);
-                                }
-                                'o' => {
-                                    print!("\r\n");
-                                    if let Some(p) = kernel.get_process(current_pid) {
-                                        let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> =
-                                            Vec::new();
-                                        for m in p.messages.iter().rev().take(10) {
-                                            if let Some(ref tc) = m.tool_calls {
-                                                for t in tc.iter().rev() {
-                                                    tool_calls.push(t);
-                                                }
+                                redraw_prompt(prompt, &buf, pos);
+                            }
+                            'o' => {
+                                print!("\r\n");
+                                if let Some(p) = kernel.get_process(current_pid) {
+                                    let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> = Vec::new();
+                                    for m in p.messages.iter().rev().take(10) {
+                                        if let Some(ref tc) = m.tool_calls {
+                                            for t in tc.iter().rev() {
+                                                tool_calls.push(t);
                                             }
                                         }
-                                        if tool_calls.is_empty() {
+                                    }
+                                    if tool_calls.is_empty() {
+                                        println!("{DIM}(no tool calls in recent messages){RESET}");
+                                    } else {
+                                        let total = tool_calls.len().min(5);
+                                        println!(
+                                            "{BOLD}═══ Last {} tool call{} ═══{RESET}",
+                                            total,
+                                            if total > 1 { "s" } else { "" }
+                                        );
+                                        for (i, tc) in tool_calls.iter().take(5).enumerate() {
                                             println!(
-                                                "{DIM}(no tool calls in recent messages){RESET}"
-                                            );
-                                        } else {
-                                            let total = tool_calls.len().min(5);
-                                            println!(
-                                                "{BOLD}═══ Last {} tool call{} ═══{RESET}",
+                                                "  [{}/{}] {CYAN}{}{RESET}",
+                                                i + 1,
                                                 total,
-                                                if total > 1 { "s" } else { "" }
+                                                tc.function.name
                                             );
-                                            for (i, tc) in tool_calls.iter().take(5).enumerate() {
-                                                println!(
-                                                    "  [{}/{}] {CYAN}{}{RESET}",
-                                                    i + 1,
-                                                    total,
-                                                    tc.function.name
-                                                );
-                                                let args = &tc.function.arguments;
-                                                let preview = if args.len() > 200 {
-                                                    format!("{}…", &args[..200])
-                                                } else {
-                                                    args.to_string()
-                                                };
-                                                println!("    {}", preview);
-                                            }
-                                            println!("{BOLD}═{RESET}");
-                                            let tc_model = p.npc.resolved_model();
-                                            let tc_provider = p.npc.resolved_provider();
-                                            println!(
-                                                "{DIM}  [{} | {}]{RESET}",
-                                                tc_model, tc_provider
-                                            );
+                                            let args = &tc.function.arguments;
+                                            let preview = if args.len() > 200 {
+                                                format!("{}…", &args[..200])
+                                            } else {
+                                                args.to_string()
+                                            };
+                                            println!("    {}", preview);
                                         }
+                                        println!("{BOLD}═{RESET}");
+                                        let tc_model = p.npc.resolved_model();
+                                        let tc_provider = p.npc.resolved_provider();
+                                        println!("{DIM}  [{} | {}]{RESET}", tc_model, tc_provider);
                                     }
-                                    redraw_prompt(prompt, &buf, pos);
                                 }
-                                _ => {}
-                            }
-                        } else {
-                            tab_matches.clear();
-                            if pos == buf.len() {
-                                buf.push(c);
-                                print!("{}", c);
-                                pos += 1;
-                            } else {
-                                buf.insert(pos, c);
-                                pos += 1;
                                 redraw_prompt(prompt, &buf, pos);
                             }
-                            io::stdout().flush()?;
+                            _ => {}
                         }
-                    }
-                    KeyCode::Backspace => {
+                    } else {
                         tab_matches.clear();
-                        if pos > 0 {
-                            buf.remove(pos - 1);
-                            pos -= 1;
-                            if pos == buf.len() {
-                                print!("\x08 \x08");
-                            } else {
-                                redraw_prompt(prompt, &buf, pos);
-                            }
-                            io::stdout().flush()?;
-                        }
-                    }
-                    KeyCode::Delete => {
-                        tab_matches.clear();
-                        if pos < buf.len() {
-                            buf.remove(pos);
-                            redraw_prompt(prompt, &buf, pos);
-                            io::stdout().flush()?;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        print!("\r\n");
-                        break Ok(Some(buf));
-                    }
-                    KeyCode::Left => {
-                        if pos > 0 {
-                            pos -= 1;
-                            print!("\x1b[D");
-                            io::stdout().flush()?;
-                        }
-                    }
-                    KeyCode::Right => {
-                        if pos < buf.len() {
+                        if pos == buf.len() {
+                            buf.push(c);
+                            print!("{}", c);
                             pos += 1;
-                            print!("\x1b[C");
-                            io::stdout().flush()?;
+                        } else {
+                            buf.insert(pos, c);
+                            pos += 1;
+                            redraw_prompt(prompt, &buf, pos);
                         }
+                        io::stdout().flush()?;
                     }
-                    KeyCode::Home => {
-                        if pos > 0 {
-                            print!("{}", "\x1b[D".repeat(pos));
-                            pos = 0;
-                            io::stdout().flush()?;
+                }
+                KeyCode::Backspace => {
+                    tab_matches.clear();
+                    if pos > 0 {
+                        buf.remove(pos - 1);
+                        pos -= 1;
+                        if pos == buf.len() {
+                            print!("\x08 \x08");
+                        } else {
+                            redraw_prompt(prompt, &buf, pos);
                         }
+                        io::stdout().flush()?;
                     }
-                    KeyCode::End => {
-                        if pos < buf.len() {
-                            print!("{}", "\x1b[C".repeat(buf.len() - pos));
-                            pos = buf.len();
-                            io::stdout().flush()?;
-                        }
+                }
+                KeyCode::Delete => {
+                    tab_matches.clear();
+                    if pos < buf.len() {
+                        buf.remove(pos);
+                        redraw_prompt(prompt, &buf, pos);
+                        io::stdout().flush()?;
                     }
-                    KeyCode::Up => {
-                        if let Some(idx) = *history_index {
-                            if idx > 0 {
-                                let new_idx = idx - 1;
-                                *history_index = Some(new_idx);
-                                buf = history[new_idx].clone();
-                                pos = buf.len();
-                                redraw_prompt(prompt, &buf, pos);
-                            }
-                        } else if !history.is_empty() {
-                            let new_idx = history.len() - 1;
+                }
+                KeyCode::Enter => {
+                    print!("\r\n");
+                    break Ok(Some(buf));
+                }
+                KeyCode::Left => {
+                    if pos > 0 {
+                        pos -= 1;
+                        print!("\x1b[D");
+                        io::stdout().flush()?;
+                    }
+                }
+                KeyCode::Right => {
+                    if pos < buf.len() {
+                        pos += 1;
+                        print!("\x1b[C");
+                        io::stdout().flush()?;
+                    }
+                }
+                KeyCode::Home => {
+                    if pos > 0 {
+                        print!("{}", "\x1b[D".repeat(pos));
+                        pos = 0;
+                        io::stdout().flush()?;
+                    }
+                }
+                KeyCode::End => {
+                    if pos < buf.len() {
+                        print!("{}", "\x1b[C".repeat(buf.len() - pos));
+                        pos = buf.len();
+                        io::stdout().flush()?;
+                    }
+                }
+                KeyCode::Up => {
+                    if let Some(idx) = *history_index {
+                        if idx > 0 {
+                            let new_idx = idx - 1;
                             *history_index = Some(new_idx);
                             buf = history[new_idx].clone();
                             pos = buf.len();
                             redraw_prompt(prompt, &buf, pos);
                         }
+                    } else if !history.is_empty() {
+                        let new_idx = history.len() - 1;
+                        *history_index = Some(new_idx);
+                        buf = history[new_idx].clone();
+                        pos = buf.len();
+                        redraw_prompt(prompt, &buf, pos);
                     }
-                    KeyCode::Down => {
-                        if let Some(idx) = *history_index {
-                            if idx + 1 < history.len() {
-                                let new_idx = idx + 1;
-                                *history_index = Some(new_idx);
-                                buf = history[new_idx].clone();
-                                pos = buf.len();
-                                redraw_prompt(prompt, &buf, pos);
-                            } else {
-                                *history_index = None;
-                                buf.clear();
-                                pos = 0;
-                                redraw_prompt(prompt, &buf, pos);
-                            }
-                        }
-                    }
-                    KeyCode::Tab => {
-                        if tab_matches.is_empty() {
-                            let (word_start, matches) = helper.complete(&buf, pos);
-                            if matches.len() == 1 {
-                                let replacement = &matches[0].replacement;
-                                let new_buf =
-                                    format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
-                                pos = word_start + replacement.len();
-                                buf = new_buf;
-                                redraw_prompt(prompt, &buf, pos);
-                                tab_matches.clear();
-                            } else if !matches.is_empty() {
-                                tab_matches = matches;
-                                tab_index = 0;
-                                print!("\r\n");
-                                for m in &tab_matches {
-                                    println!("  {}", m.display);
-                                }
-                                redraw_prompt(prompt, &buf, pos);
-                            }
-                        } else {
-                            if !tab_matches.is_empty() {
-                                tab_index = (tab_index + 1) % tab_matches.len();
-                                let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
-                                let replacement = &tab_matches[tab_index].replacement;
-                                let new_buf =
-                                    format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
-                                pos = word_start + replacement.len();
-                                buf = new_buf;
-                                redraw_prompt(prompt, &buf, pos);
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                KeyCode::Down => {
+                    if let Some(idx) = *history_index {
+                        if idx + 1 < history.len() {
+                            let new_idx = idx + 1;
+                            *history_index = Some(new_idx);
+                            buf = history[new_idx].clone();
+                            pos = buf.len();
+                            redraw_prompt(prompt, &buf, pos);
+                        } else {
+                            *history_index = None;
+                            buf.clear();
+                            pos = 0;
+                            redraw_prompt(prompt, &buf, pos);
+                        }
+                    }
+                }
+                KeyCode::Tab => {
+                    if tab_matches.is_empty() {
+                        let (word_start, matches) = helper.complete(&buf, pos);
+                        if matches.len() == 1 {
+                            let replacement = &matches[0].replacement;
+                            let new_buf =
+                                format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                            pos = word_start + replacement.len();
+                            buf = new_buf;
+                            redraw_prompt(prompt, &buf, pos);
+                            tab_matches.clear();
+                        } else if !matches.is_empty() {
+                            tab_matches = matches;
+                            tab_index = 0;
+                            print!("\r\n");
+                            for m in &tab_matches {
+                                println!("  {}", m.display);
+                            }
+                            redraw_prompt(prompt, &buf, pos);
+                        }
+                    } else {
+                        if !tab_matches.is_empty() {
+                            tab_index = (tab_index + 1) % tab_matches.len();
+                            let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                            let replacement = &tab_matches[tab_index].replacement;
+                            let new_buf =
+                                format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                            pos = word_start + replacement.len();
+                            buf = new_buf;
+                            redraw_prompt(prompt, &buf, pos);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     };
@@ -1633,12 +1626,12 @@ fn strip_ansi(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            if let Some(next) = chars.next() {
-                if next == '[' {
-                    while let Some(ch) = chars.next() {
-                        if ch.is_ascii_alphabetic() {
-                            break;
-                        }
+            if let Some(next) = chars.next()
+                && next == '['
+            {
+                for ch in chars.by_ref() {
+                    if ch.is_ascii_alphabetic() {
+                        break;
                     }
                 }
             }
@@ -1662,7 +1655,7 @@ fn redraw_prompt(prompt: &str, buf: &str, pos: usize) {
     // How many lines from the start of the prompt to the cursor?
     let cursor_line = (prompt_w + pos) / term_width;
     // How many lines does the whole prompt+buf occupy?
-    let total_lines = std::cmp::max(1, (prompt_w + buf_w + term_width - 1) / term_width);
+    let total_lines = std::cmp::max(1, (prompt_w + buf_w).div_ceil(term_width));
 
     // Move to the first line of the prompt (column 0)
     for _ in 0..cursor_line {
