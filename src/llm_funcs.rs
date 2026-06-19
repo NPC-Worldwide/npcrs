@@ -1852,7 +1852,7 @@ pub async fn gen_image(
         )
     } else {
         return Err(NpcError::LlmRequest(
-            "gen_image requires model and provider (or an NPC)".into()
+            "gen_image requires model and provider (or an NPC)".into(),
         ));
     };
     crate::r#gen::generate_image(prompt, &m, &p, api_key, width, height).await

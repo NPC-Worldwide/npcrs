@@ -314,6 +314,8 @@ mod tests {
                 }]),
                 tool_call_id: None,
                 name: None,
+                reasoning_content: None,
+                thinking: None,
             },
             Message::tool_result("call_42", "72F and sunny"),
             Message::assistant("It's 72F and sunny in Portland!"),
