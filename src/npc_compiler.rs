@@ -1605,7 +1605,10 @@ async fn execute_step(
             let rendered = render_step_template(&step.code, context)?;
             execute_rust(&rendered, context).await
         }
-        "python" => execute_python_via_npcpy(&step.code, context).await,
+        "python" => {
+            let rendered = render_python_template(&step.code, context);
+            execute_python_via_npcpy(&rendered, context).await
+        }
         "bash" => {
             let rendered = render_step_template(&step.code, context)?;
             execute_bash(&rendered).await
@@ -1624,7 +1627,10 @@ async fn execute_step_interactive(
             let rendered = render_step_template(&step.code, context)?;
             execute_rust(&rendered, context).await
         }
-        "python" => execute_python_via_npcpy(&step.code, context).await,
+        "python" => {
+            let rendered = render_python_template(&step.code, context);
+            execute_python_via_npcpy(&rendered, context).await
+        }
         "bash" => {
             let rendered = render_step_template(&step.code, context)?;
             execute_bash_interactive(&rendered).await
