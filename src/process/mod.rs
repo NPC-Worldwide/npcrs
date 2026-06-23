@@ -5,6 +5,36 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
+/// Agent-user group with read/write/execute capabilities.
+/// Inherited by child processes when they are spawned.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentGroup {
+    pub name: String,
+    pub can_read: bool,
+    pub can_write: bool,
+    pub can_execute: bool,
+}
+
+impl AgentGroup {
+    pub fn root() -> Self {
+        Self {
+            name: "root".to_string(),
+            can_read: true,
+            can_write: true,
+            can_execute: true,
+        }
+    }
+
+    pub fn none(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            can_read: false,
+            can_write: false,
+            can_execute: false,
+        }
+    }
+}
+
 pub type Pid = u32;
 
 pub struct Process {
@@ -72,6 +102,8 @@ pub struct Capabilities {
     pub max_delegation_depth: u32,
 
     pub is_superuser: bool,
+
+    pub group: Option<AgentGroup>,
 }
 
 impl Capabilities {
@@ -85,6 +117,7 @@ impl Capabilities {
             can_delegate: true,
             max_delegation_depth: 10,
             is_superuser: true,
+            group: Some(AgentGroup::root()),
         }
     }
 
@@ -98,11 +131,24 @@ impl Capabilities {
             can_delegate: false,
             max_delegation_depth: 0,
             is_superuser: false,
+            group: Some(AgentGroup::none("sandbox")),
         }
     }
 
     pub fn can_run_jinx(&self, name: &str) -> bool {
         self.is_superuser || self.allowed_jinxes.is_empty() || self.allowed_jinxes.contains(name)
+    }
+
+    pub fn can_read(&self) -> bool {
+        self.is_superuser || self.group.as_ref().map(|g| g.can_read).unwrap_or(false)
+    }
+
+    pub fn can_write(&self) -> bool {
+        self.is_superuser || self.group.as_ref().map(|g| g.can_write).unwrap_or(false)
+    }
+
+    pub fn can_execute(&self) -> bool {
+        self.is_superuser || self.group.as_ref().map(|g| g.can_execute).unwrap_or(false)
     }
 }
 
@@ -215,6 +261,13 @@ impl Process {
             last_streamed: false,
             last_thinking: None,
         }
+    }
+
+    /// Spawn a child process inheriting the parent's agent group permissions.
+    pub fn spawn_child(pid: Pid, ppid: Pid, npc: NPC, parent_caps: &Capabilities) -> Self {
+        let mut caps = parent_caps.clone();
+        caps.is_superuser = false;
+        Self::spawn(pid, ppid, npc, caps)
     }
 
     pub fn can_invoke(&self, jinx_name: &str) -> bool {
