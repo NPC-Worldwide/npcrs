@@ -57,6 +57,10 @@ pub struct PythonDaemon {
 }
 
 enum DaemonMode {
+    Http {
+        base_url: String,
+        client: reqwest::Client,
+    },
     #[cfg(unix)]
     Socket {
         writer: tokio::net::unix::OwnedWriteHalf,
@@ -92,6 +96,14 @@ pub struct LlmRequest {
     pub think: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registered_teams: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub npc: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +126,23 @@ pub struct LlmResponse {
 }
 
 impl PythonDaemon {
+    /// Connect to the generic npcpy HTTP server.
+    pub fn connect_http(base_url: impl Into<String>) -> Self {
+        let base_url = base_url.into();
+        tracing::info!("Connected to npcpy HTTP server at {}", base_url);
+        Self {
+            mode: DaemonMode::Http {
+                base_url,
+                client: reqwest::Client::new(),
+            },
+        }
+    }
+
+    /// Default local npcpy server URL.
+    pub fn default_url() -> String {
+        std::env::var("NPCPY_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:5337".to_string())
+    }
+
     /// Connect to a persistent Unix socket daemon.
     /// Returns `Ok(Self)` if the socket is live, otherwise returns an error
     /// so the caller can decide whether to start a daemon.
@@ -172,13 +201,24 @@ impl PythonDaemon {
         ))
     }
 
-    /// Try to connect to a persistent Unix socket daemon.  Falls back to
-    /// spawning a subprocess if the socket is not available.
+    /// Try to connect to the HTTP server first, then fall back to Unix socket,
+    /// then subprocess.
     pub async fn spawn(_team_dir: &str, _db_path: &str) -> Result<Self> {
+        let url = Self::default_url();
+        if Self::http_alive(&url).await {
+            return Ok(Self::connect_http(url));
+        }
         if let Ok(d) = Self::connect().await {
             return Ok(d);
         }
         Self::spawn_subprocess(_team_dir, _db_path).await
+    }
+
+    async fn http_alive(url: &str) -> bool {
+        reqwest::get(format!("{}/api/health", url))
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
     }
 
     pub fn socket_path() -> std::path::PathBuf {
@@ -372,6 +412,12 @@ for line in sys.stdin:
         let mut line = serde_json::to_string(request).unwrap_or_default();
         line.push('\n');
 
+        if let DaemonMode::Http { base_url, client } = &self.mode {
+            let base_url = base_url.clone();
+            let client = client.clone();
+            return self.llm_http(&client, &base_url, request).await;
+        }
+
         match &mut self.mode {
             #[cfg(unix)]
             DaemonMode::Socket { writer, reader } => {
@@ -451,6 +497,9 @@ for line in sys.stdin:
 
                 Ok(resp)
             }
+            DaemonMode::Http { .. } => {
+                unreachable!("HTTP mode is handled before match")
+            }
         }
     }
 
@@ -467,6 +516,34 @@ for line in sys.stdin:
         line.push('\n');
 
         match &mut self.mode {
+            DaemonMode::Http { base_url, client } => {
+                let url = format!("{}/api/jinx/execute", base_url);
+                let body = serde_json::json!({
+                    "jinxName": command,
+                    "stdin_input": stdin_input,
+                });
+                let resp =
+                    client.post(&url).json(&body).send().await.map_err(|e| {
+                        NpcError::Other(format!("HTTP execute request failed: {}", e))
+                    })?;
+                let status = resp.status();
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| NpcError::Other(format!("HTTP execute body failed: {}", e)))?;
+                if !status.is_success() {
+                    return Err(NpcError::Other(format!(
+                        "HTTP execute returned {}: {}",
+                        status, text
+                    )));
+                }
+                let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+                Ok(json
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&text)
+                    .to_string())
+            }
             #[cfg(unix)]
             DaemonMode::Socket { writer, reader } => {
                 writer
@@ -527,6 +604,211 @@ for line in sys.stdin:
                     .to_string())
             }
         }
+    }
+
+    async fn llm_http(
+        &self,
+        client: &reqwest::Client,
+        base_url: &str,
+        request: &LlmRequest,
+    ) -> Result<LlmResponse> {
+        use futures::StreamExt;
+
+        let url = format!("{}/api/stream", base_url);
+        let body = serde_json::json!({
+            "model": request.model,
+            "provider": request.provider,
+            "messages": request.messages,
+            "tools": request.tools,
+            "tool_choice": request.tool_choice,
+            "prompt": request.prompt,
+            "npc": request.npc,
+            "registered_teams": request.registered_teams,
+            "conversationId": request.conversation_id,
+            "currentPath": request.current_path,
+        });
+
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| NpcError::Other(format!("HTTP stream request failed: {}", e)))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(NpcError::Other(format!(
+                "HTTP stream returned {}: {}",
+                status, text
+            )));
+        }
+
+        let mut content = String::new();
+        let mut reasoning = String::new();
+        let mut thinking = String::new();
+        let mut tool_calls: Vec<crate::r#gen::ToolCall> = Vec::new();
+        let mut usage: Option<crate::r#gen::Usage> = None;
+        let mut done = false;
+        let mut saw_output = false;
+
+        let mut stream = resp.bytes_stream();
+        let mut pending = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| NpcError::Other(format!("HTTP stream chunk: {}", e)))?;
+            pending.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(pos) = pending.find('\n') {
+                let line = pending[..pos].trim().to_string();
+                pending.replace_range(..pos + 1, "");
+
+                if line.is_empty() || !line.starts_with("data: ") {
+                    continue;
+                }
+                let data = line.trim_start_matches("data: ").trim();
+                if data == "[DONE]" {
+                    done = true;
+                    break;
+                }
+
+                let json: serde_json::Value = match serde_json::from_str(data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                if let Some(typ) = json.get("type").and_then(|v| v.as_str()) {
+                    match typ {
+                        "usage" => {
+                            usage = Some(crate::r#gen::Usage {
+                                prompt_tokens: json
+                                    .get("input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                completion_tokens: json
+                                    .get("output_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                total_tokens: json
+                                    .get("total_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                            });
+                        }
+                        "message_stop" => {
+                            done = true;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                if let Some(choices) = json.get("choices").and_then(|v| v.as_array()) {
+                    if let Some(delta) = choices.first().and_then(|c| c.get("delta")) {
+                        if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
+                            content.push_str(text);
+                            saw_output = true;
+                            eprint!("{}", text);
+                            let _ = std::io::Write::flush(&mut std::io::stderr());
+                        }
+                        if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
+                            thinking.push_str(t);
+                            saw_output = true;
+                            eprint!("\x1b[90m{}\x1b[0m", t);
+                            let _ = std::io::Write::flush(&mut std::io::stderr());
+                        }
+                        if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
+                            reasoning.push_str(r);
+                            saw_output = true;
+                        }
+                        if let Some(deltas) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                            for (i, d) in deltas.iter().enumerate() {
+                                let idx = d
+                                    .get("index")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize)
+                                    .unwrap_or(i);
+                                while tool_calls.len() <= idx {
+                                    tool_calls.push(crate::r#gen::ToolCall {
+                                        id: String::new(),
+                                        r#type: "function".to_string(),
+                                        function: crate::r#gen::ToolCallFunction {
+                                            name: String::new(),
+                                            arguments: String::new(),
+                                        },
+                                    });
+                                }
+                                saw_output = true;
+                                if let Some(id) = d.get("id").and_then(|v| v.as_str()) {
+                                    if !id.is_empty() {
+                                        tool_calls[idx].id = id.to_string();
+                                    }
+                                }
+                                if let Some(tc_type) = d.get("type").and_then(|v| v.as_str()) {
+                                    if !tc_type.is_empty() {
+                                        tool_calls[idx].r#type = tc_type.to_string();
+                                    }
+                                }
+                                if let Some(func) = d.get("function") {
+                                    if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                                        if !name.is_empty() {
+                                            tool_calls[idx].function.name = name.to_string();
+                                        }
+                                    }
+                                    if let Some(args) =
+                                        func.get("arguments").and_then(|v| v.as_str())
+                                    {
+                                        tool_calls[idx].function.arguments.push_str(args);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(finish) = choices
+                            .first()
+                            .and_then(|c| c.get("finish_reason"))
+                            .and_then(|v| v.as_str())
+                        {
+                            if finish == "stop" || finish == "length" {
+                                done = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if done {
+                break;
+            }
+        }
+
+        // Remove empty trailing tool call slots.
+        tool_calls.retain(|tc| !tc.function.name.is_empty());
+
+        Ok(LlmResponse {
+            ok: true,
+            response: if content.is_empty() {
+                None
+            } else {
+                Some(content)
+            },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+            usage,
+            thinking: if thinking.is_empty() {
+                None
+            } else {
+                Some(thinking)
+            },
+            reasoning: if reasoning.is_empty() {
+                None
+            } else {
+                Some(reasoning)
+            },
+            streamed: Some(saw_output),
+            error: None,
+        })
     }
 }
 
@@ -799,6 +1081,18 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 messages.len(),
             );
 
+            let registered_teams = self
+                .team
+                .source_dir
+                .as_ref()
+                .map(|d| vec![d.clone()])
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|d| d.to_string_lossy().to_string())
+                        .map(|d| vec![d])
+                });
+
             let has_daemon = self.python_daemon.is_some();
             let response: crate::r#gen::LlmResponse = if has_daemon {
                 let daemon = self.python_daemon.as_mut().unwrap();
@@ -807,7 +1101,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     messages,
                     model: model.clone(),
                     provider: provider.clone(),
-                    prompt: iter_prompt,
+                    prompt: iter_prompt.clone(),
                     context: Some(context_info.clone()),
                     tools: tools.clone(),
                     tool_choice: Some("auto".to_string()),
@@ -815,6 +1109,10 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     api_key: api_key.clone(),
                     think: think_mode,
                     attachments: None,
+                    registered_teams,
+                    conversation_id: Some(conv_id.clone()),
+                    current_path: Some(cwd.clone()),
+                    npc: Some(npc_name.clone()),
                 };
                 match tokio::time::timeout(std::time::Duration::from_secs(120), daemon.llm(&req))
                     .await
