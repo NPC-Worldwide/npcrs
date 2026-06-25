@@ -522,12 +522,10 @@ for line in sys.stdin:
                     "jinxName": command,
                     "stdin_input": stdin_input,
                 });
-                let resp = client
-                    .post(&url)
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| NpcError::Other(format!("HTTP execute request failed: {}", e)))?;
+                let resp =
+                    client.post(&url).json(&body).send().await.map_err(|e| {
+                        NpcError::Other(format!("HTTP execute request failed: {}", e))
+                    })?;
                 let status = resp.status();
                 let text = resp
                     .text()
@@ -683,9 +681,18 @@ for line in sys.stdin:
                     match typ {
                         "usage" => {
                             usage = Some(crate::r#gen::Usage {
-                                prompt_tokens: json.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                completion_tokens: json.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                total_tokens: json.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                prompt_tokens: json
+                                    .get("input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                completion_tokens: json
+                                    .get("output_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                total_tokens: json
+                                    .get("total_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
                             });
                         }
                         "message_stop" => {
@@ -716,7 +723,11 @@ for line in sys.stdin:
                         }
                         if let Some(deltas) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                             for (i, d) in deltas.iter().enumerate() {
-                                let idx = d.get("index").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(i);
+                                let idx = d
+                                    .get("index")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize)
+                                    .unwrap_or(i);
                                 while tool_calls.len() <= idx {
                                     tool_calls.push(crate::r#gen::ToolCall {
                                         id: String::new(),
@@ -744,13 +755,19 @@ for line in sys.stdin:
                                             tool_calls[idx].function.name = name.to_string();
                                         }
                                     }
-                                    if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                    if let Some(args) =
+                                        func.get("arguments").and_then(|v| v.as_str())
+                                    {
                                         tool_calls[idx].function.arguments.push_str(args);
                                     }
                                 }
                             }
                         }
-                        if let Some(finish) = choices.first().and_then(|c| c.get("finish_reason")).and_then(|v| v.as_str()) {
+                        if let Some(finish) = choices
+                            .first()
+                            .and_then(|c| c.get("finish_reason"))
+                            .and_then(|v| v.as_str())
+                        {
                             if finish == "stop" || finish == "length" {
                                 done = true;
                             }
@@ -768,11 +785,27 @@ for line in sys.stdin:
 
         Ok(LlmResponse {
             ok: true,
-            response: if content.is_empty() { None } else { Some(content) },
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+            response: if content.is_empty() {
+                None
+            } else {
+                Some(content)
+            },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
             usage,
-            thinking: if thinking.is_empty() { None } else { Some(thinking) },
-            reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+            thinking: if thinking.is_empty() {
+                None
+            } else {
+                Some(thinking)
+            },
+            reasoning: if reasoning.is_empty() {
+                None
+            } else {
+                Some(reasoning)
+            },
             streamed: Some(saw_output),
             error: None,
         })
