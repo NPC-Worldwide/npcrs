@@ -676,9 +676,7 @@ for line in sys.stdin:
         while !done {
             let chunk = match stream.next().await {
                 Some(Ok(bytes)) => bytes,
-                Some(Err(e)) => {
-                    return Err(NpcError::Other(format!("HTTP stream chunk: {}", e)))
-                }
+                Some(Err(e)) => return Err(NpcError::Other(format!("HTTP stream chunk: {}", e))),
                 None => break,
             };
             pending.push_str(&String::from_utf8_lossy(&chunk));
@@ -686,7 +684,11 @@ for line in sys.stdin:
             // Extract complete SSE events (separated by a blank line).
             while let Some(sep_pos) = pending.find("\n\n").or_else(|| pending.find("\r\n\r\n")) {
                 let event_text = pending[..sep_pos].to_string();
-                let newline_len = if pending[sep_pos..].starts_with("\r\n\r\n") { 4 } else { 2 };
+                let newline_len = if pending[sep_pos..].starts_with("\r\n\r\n") {
+                    4
+                } else {
+                    2
+                };
                 pending.replace_range(..sep_pos + newline_len, "");
 
                 let data = parse_sse_event_data(&event_text);
@@ -914,7 +916,10 @@ for line in sys.stdin:
             tool_calls.push(crate::r#gen::ToolCall {
                 id,
                 r#type: "function".to_string(),
-                function: crate::r#gen::ToolCallFunction { name, arguments: args },
+                function: crate::r#gen::ToolCallFunction {
+                    name,
+                    arguments: args,
+                },
             });
             *saw_output = true;
         }

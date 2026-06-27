@@ -1,7 +1,7 @@
 [package]
 name = "npcrs"
 version = "0.1.20"
-edition = "2026"
+edition = "2024"
 description = "Rust core for the NPC system — agent kernel, jinx executor, LLM client"
 license = "MIT"
 repository = "https://github.com/NPC-Worldwide/npcrs"
