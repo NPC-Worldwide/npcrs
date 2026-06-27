@@ -1468,28 +1468,28 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         .execute_tool(tc_name, &args, &executors, &active_npc)
                         .await;
 
-                    eprintln!("\x1b[36m\n⚡ {} [{}|{}]:\x1b[0m", tc_name, model, provider);
-                    let preview = if tool_result.len() > 500 {
-                        format!(
-                            "{}...\n[{} chars total]",
-                            &tool_result[..500],
-                            tool_result.len()
-                        )
-                    } else {
-                        tool_result.clone()
-                    };
-                    eprintln!("{}", preview);
-
-                    if tc_name == "stop" {
-                        stop_requested = true;
-                    }
-
                     if tc_name == "chat" {
                         final_output = args
                             .get("message")
                             .or_else(|| args.get("query"))
                             .cloned()
                             .unwrap_or_default();
+                    } else {
+                        eprintln!("\x1b[36m\n⚡ {} [{}|{}]:\x1b[0m", tc_name, model, provider);
+                        let preview = if tool_result.len() > 500 {
+                            format!(
+                                "{}...\n[{} chars total]",
+                                &tool_result[..500],
+                                tool_result.len()
+                            )
+                        } else {
+                            tool_result.clone()
+                        };
+                        eprintln!("{}", preview);
+                    }
+
+                    if tc_name == "stop" {
+                        stop_requested = true;
                     }
 
                     let process = self.processes.get_mut(&pid).unwrap();
