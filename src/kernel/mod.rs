@@ -644,6 +644,7 @@ for line in sys.stdin:
             "registered_teams": request.registered_teams,
             "conversationId": request.conversation_id,
             "currentPath": request.current_path,
+            "executionMode": if request.tools.is_some() { "tool_agent" } else { "chat" },
         });
 
         let resp = client
