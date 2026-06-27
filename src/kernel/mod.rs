@@ -673,12 +673,16 @@ for line in sys.stdin:
 
         let mut stream = resp.bytes_stream();
         let mut pending = String::new();
+        let mut stream_ended = false;
 
-        while !done {
+        while !stream_ended {
             let chunk = match stream.next().await {
                 Some(Ok(bytes)) => bytes,
                 Some(Err(e)) => return Err(NpcError::Other(format!("HTTP stream chunk: {}", e))),
-                None => break,
+                None => {
+                    stream_ended = true;
+                    break;
+                }
             };
             pending.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -698,7 +702,7 @@ for line in sys.stdin:
                     None => continue,
                 };
                 if data.trim() == "[DONE]" {
-                    done = true;
+                    stream_ended = true;
                     break;
                 }
 
@@ -721,7 +725,7 @@ for line in sys.stdin:
         }
 
         // Handle any trailing bytes that never got terminated by a blank line.
-        if !done && !pending.trim().is_empty() {
+        if !pending.trim().is_empty() {
             if let Some(data) = parse_sse_event_data(&pending) {
                 if data.trim() != "[DONE]" {
                     if let Ok(json) = serde_json::from_str(&data) {
