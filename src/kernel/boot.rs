@@ -39,7 +39,6 @@ pub fn boot_kernel(team_dir: &str, db_path: &str) -> Result<Kernel> {
         ipc: IpcBus::new(),
         scheduler: Scheduler::new(),
         history,
-        python_daemon: None,
         boot_time: chrono::Utc::now(),
     };
 
