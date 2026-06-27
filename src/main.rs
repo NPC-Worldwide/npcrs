@@ -279,14 +279,6 @@ async fn main() -> Result<()> {
     // Print welcome
     print_welcome(&kernel);
 
-    // Spawn Python daemon in background
-    let daemon_team = team_dir.clone();
-    let daemon_db = db_path.clone();
-    let daemon_handle =
-        tokio::spawn(
-            async move { npcrs::kernel::PythonDaemon::spawn(&daemon_team, &daemon_db).await },
-        );
-
     // Set up raw-mode input
     let npc_names: Vec<String> = kernel.ps().iter().map(|p| p.npc.name.clone()).collect();
     let jinx_names: Vec<String> = kernel.jinx_names().into_iter().map(String::from).collect();
@@ -309,19 +301,7 @@ async fn main() -> Result<()> {
     let mut session_cost: f64 = 0.0;
     let session_start = std::time::Instant::now();
 
-    let daemon_handle = std::sync::Arc::new(tokio::sync::Mutex::new(Some(daemon_handle)));
-
     loop {
-        if kernel.python_daemon.is_none()
-            && let Ok(ref mut opt) = daemon_handle.try_lock()
-            && let Some(handle) = opt.as_mut()
-            && handle.is_finished()
-            && let Some(h) = opt.take()
-            && let Ok(Ok(daemon)) = h.await
-        {
-            kernel.python_daemon = Some(daemon);
-        }
-
         // Build prompt
         let npc_name = kernel
             .get_process(current_pid)
