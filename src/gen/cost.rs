@@ -34,6 +34,8 @@ static TOKEN_COSTS: Lazy<HashMap<&'static str, (f64, f64)>> = Lazy::new(|| {
     m.insert("llama-4", (0.05, 0.10));
     m.insert("mixtral", (0.24, 0.24));
     m.insert("deepseek-v3", (0.27, 1.10));
+    m.insert("deepseek-v4-pro", (0.435, 0.87));
+    m.insert("deepseek-v4-flash", (0.14, 0.28));
     m.insert("deepseek-r1", (0.55, 2.19));
     m.insert("mistral-large", (2.00, 6.00));
     m.insert("mistral-small", (0.20, 0.60));

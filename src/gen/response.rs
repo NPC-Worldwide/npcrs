@@ -451,6 +451,7 @@ async fn get_ollama_response(
         completion_tokens: ollama_resp.eval_count.unwrap_or(0),
         total_tokens: ollama_resp.prompt_eval_count.unwrap_or(0)
             + ollama_resp.eval_count.unwrap_or(0),
+        cost_usd: 0.0,
     });
 
     Ok(LlmResponse {
@@ -510,6 +511,7 @@ fn convert_genai_response(resp: GenaiChatResponse, model: &str) -> Result<LlmRes
             prompt_tokens: u.prompt_tokens.unwrap_or(0) as u64,
             completion_tokens: u.completion_tokens.unwrap_or(0) as u64,
             total_tokens: u.total_tokens.unwrap_or(0) as u64,
+            cost_usd: 0.0,
         })
     };
 

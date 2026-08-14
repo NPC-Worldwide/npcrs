@@ -307,7 +307,7 @@ impl CommandHistory {
     ) -> Result<Vec<ConversationMessage>> {
         let mut stmt = self.conn.prepare(
             "SELECT message_id, role, content, model, provider, npc, team,
-                    tool_calls, input_tokens, output_tokens, cost
+                    tool_calls, tool_results, input_tokens, output_tokens, cost
              FROM conversation_history
              WHERE conversation_id = ?1 ORDER BY id ASC",
         )?;
@@ -323,9 +323,10 @@ impl CommandHistory {
                     npc: row.get(5)?,
                     team: row.get(6)?,
                     tool_calls: row.get(7)?,
-                    input_tokens: row.get(8)?,
-                    output_tokens: row.get(9)?,
-                    cost: row.get(10)?,
+                    tool_results: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    cost: row.get(11)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -885,9 +886,9 @@ impl CommandHistory {
 
     pub fn get_message_by_id(&self, message_id: &str) -> Result<Option<ConversationMessage>> {
         let result = self.conn.query_row(
-            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE message_id = ?1",
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, tool_results, input_tokens, output_tokens, cost FROM conversation_history WHERE message_id = ?1",
             params![message_id],
-            |row| Ok(ConversationMessage { message_id: row.get(0)?, role: row.get(1)?, content: row.get(2)?, model: row.get(3)?, provider: row.get(4)?, npc: row.get(5)?, team: row.get(6)?, tool_calls: row.get(7)?, input_tokens: row.get(8)?, output_tokens: row.get(9)?, cost: row.get(10)? }),
+            |row| Ok(ConversationMessage { message_id: row.get(0)?, role: row.get(1)?, content: row.get(2)?, model: row.get(3)?, provider: row.get(4)?, npc: row.get(5)?, team: row.get(6)?, tool_calls: row.get(7)?, tool_results: row.get(8)?, input_tokens: row.get(9)?, output_tokens: row.get(10)?, cost: row.get(11)? }),
         );
         match result {
             Ok(m) => Ok(Some(m)),
@@ -902,7 +903,7 @@ impl CommandHistory {
         n_last: usize,
     ) -> Result<Vec<ConversationMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE npc = ?1 ORDER BY id DESC LIMIT ?2"
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, tool_results, input_tokens, output_tokens, cost FROM conversation_history WHERE npc = ?1 ORDER BY id DESC LIMIT ?2"
         )?;
         let results = stmt
             .query_map(params![npc, n_last as i64], |row| {
@@ -915,9 +916,10 @@ impl CommandHistory {
                     npc: row.get(5)?,
                     team: row.get(6)?,
                     tool_calls: row.get(7)?,
-                    input_tokens: row.get(8)?,
-                    output_tokens: row.get(9)?,
-                    cost: row.get(10)?,
+                    tool_results: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    cost: row.get(11)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -931,7 +933,7 @@ impl CommandHistory {
         n_last: usize,
     ) -> Result<Vec<ConversationMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE team = ?1 ORDER BY id DESC LIMIT ?2"
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, tool_results, input_tokens, output_tokens, cost FROM conversation_history WHERE team = ?1 ORDER BY id DESC LIMIT ?2"
         )?;
         let results = stmt
             .query_map(params![team, n_last as i64], |row| {
@@ -944,9 +946,10 @@ impl CommandHistory {
                     npc: row.get(5)?,
                     team: row.get(6)?,
                     tool_calls: row.get(7)?,
-                    input_tokens: row.get(8)?,
-                    output_tokens: row.get(9)?,
-                    cost: row.get(10)?,
+                    tool_results: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    cost: row.get(11)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1009,7 +1012,7 @@ impl CommandHistory {
     pub fn search_conversations(&self, search_term: &str) -> Result<Vec<ConversationMessage>> {
         let pattern = format!("%{}%", search_term);
         let mut stmt = self.conn.prepare(
-            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, input_tokens, output_tokens, cost FROM conversation_history WHERE content LIKE ?1 ORDER BY id DESC LIMIT 100"
+            "SELECT message_id, role, content, model, provider, npc, team, tool_calls, tool_results, input_tokens, output_tokens, cost FROM conversation_history WHERE content LIKE ?1 ORDER BY id DESC LIMIT 100"
         )?;
         let results = stmt
             .query_map(params![pattern], |row| {
@@ -1022,9 +1025,10 @@ impl CommandHistory {
                     npc: row.get(5)?,
                     team: row.get(6)?,
                     tool_calls: row.get(7)?,
-                    input_tokens: row.get(8)?,
-                    output_tokens: row.get(9)?,
-                    cost: row.get(10)?,
+                    tool_results: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    cost: row.get(11)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1153,6 +1157,7 @@ pub struct ConversationMessage {
     pub npc: Option<String>,
     pub team: Option<String>,
     pub tool_calls: Option<String>,
+    pub tool_results: Option<String>,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub cost: Option<String>,

@@ -96,6 +96,7 @@ pub fn get_llamacpp_response(
             prompt_tokens,
             completion_tokens,
             total_tokens: prompt_tokens + completion_tokens,
+            cost_usd: 0.0,
         }),
         model: model_path.to_string(),
         finish_reason: Some("stop".to_string()),
