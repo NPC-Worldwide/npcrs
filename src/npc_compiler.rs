@@ -1,10 +1,11 @@
 use crate::error::{NpcError, Result};
 use crate::r#gen::{LlmResponse, Message, ToolDef};
 use crate::tools::{RegisteredTool, ToolBuilder, ToolRegistry};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tera::{Context, Tera};
 use tokio::process::Command;
 use walkdir::WalkDir;
@@ -1104,31 +1105,131 @@ fn expand_jinx_glob(pattern: &str) -> Vec<String> {
     Vec::new()
 }
 
-fn extract_jinx_call(line: &str) -> Option<String> {
-    let line = line.trim().trim_start_matches('-').trim();
+#[derive(Debug, Clone)]
+struct ForeignJinxRef {
+    name: String,
+    repo: Option<String>,
+    path: Option<String>,
+    ref_: Option<String>,
+}
 
-    if !line.starts_with("{{") || !line.ends_with("}}") {
+fn extract_jinx_call(line: &str) -> Option<String> {
+    let trimmed = line.trim().trim_start_matches('-').trim();
+
+    if !trimmed.starts_with("{{") || !trimmed.ends_with("}}") {
         return None;
     }
 
-    let inner = line.trim_start_matches("{{").trim_end_matches("}}").trim();
+    let inner = trimmed.trim_start_matches("{{").trim_end_matches("}}").trim();
 
     if !inner.starts_with("Jinx(") {
         return None;
     }
 
-    let name_part = inner
-        .trim_start_matches("Jinx(")
-        .trim_end_matches(')')
-        .trim()
-        .trim_matches('\'')
-        .trim_matches('"');
-
-    if name_part.is_empty() {
+    let after = inner.trim_start_matches("Jinx(").trim();
+    let quote = after.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    let end = after[1..].find(quote)?;
+    let name = &after[1..1 + end];
+    if name.is_empty() {
         return None;
     }
 
-    Some(name_part.to_string())
+    Some(name.to_string())
+}
+
+fn extract_foreign_jinx_refs(raw: &str) -> Vec<ForeignJinxRef> {
+    let mut out = Vec::new();
+    let re = Regex::new(r"\{\{\s*Jinx\s*\(\s*['\"](?P<name>[^'\"]+)['\"]\s*(?:,\s*(?P<rest>[^)]*))?\s*\)\s*\}\}").unwrap();
+    let kw_re = Regex::new(r"(?P<key>repo|path|ref)\s*=\s*['\"](?P<val>[^'\"]+)['\"]").unwrap();
+    let positional_re = Regex::new(r"^\s*['\"](?P<val>[^'\"]+)['\"]\s*$").unwrap();
+    for cap in re.captures_iter(raw) {
+        let name = cap.name("name").unwrap().as_str().to_string();
+        let rest = cap.name("rest").map(|m| m.as_str());
+        let mut repo = None;
+        let mut path = None;
+        let mut ref_ = None;
+        if let Some(rest_str) = rest {
+            for kw_cap in kw_re.captures_iter(rest_str) {
+                let key = kw_cap.name("key").unwrap().as_str();
+                let val = kw_cap.name("val").unwrap().as_str().to_string();
+                match key {
+                    "repo" => repo = Some(val),
+                    "path" => path = Some(val),
+                    "ref" => ref_ = Some(val),
+                    _ => {}
+                }
+            }
+            if repo.is_none() && path.is_none() {
+                if let Some(pos_cap) = positional_re.captures(rest_str.trim()) {
+                    path = Some(pos_cap.name("val").unwrap().as_str().to_string());
+                }
+            }
+        }
+        out.push(ForeignJinxRef { name, repo, path, ref_ });
+    }
+    out
+}
+
+fn resolve_external_team_root(repo: Option<&str>, path: Option<&str>, ref_: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = path {
+        let expanded = shellexpand::tilde(p).to_string();
+        let pb = PathBuf::from(expanded);
+        if pb.is_dir() {
+            return Some(pb);
+        }
+    }
+    if let Some(r) = repo {
+        let cache_root = PathBuf::from(shellexpand::tilde("~/.cache/npc_teams").to_string());
+        let mut slug = r.replace('/', "_");
+        if let Some(ref_val) = ref_ {
+            slug = format!("{}@{}", slug, ref_val);
+        }
+        let clone_dir = cache_root.join(&slug);
+        if !clone_dir.is_dir() {
+            let url = format!("https://github.com/{}.git", r);
+            let mut cmd = std::process::Command::new("git");
+            cmd.arg("clone").arg("--depth").arg("1");
+            if let Some(ref_val) = ref_ {
+                cmd.arg("--branch").arg(ref_val);
+            }
+            cmd.arg(&url).arg(clone_dir.to_str().unwrap());
+            let _ = cmd.output();
+        }
+        if clone_dir.is_dir() {
+            for entry in WalkDir::new(&clone_dir).max_depth(10).follow_links(true) {
+                if let Ok(e) = entry {
+                    if e.file_name() == "npc_team" && e.path().is_dir() {
+                        return Some(e.path().to_path_buf());
+                    }
+                }
+            }
+            if clone_dir.join("jinxes").is_dir() {
+                return Some(clone_dir);
+            }
+        }
+    }
+    None
+}
+
+fn load_foreign_jinx(team: &mut Team, team_root: &Path, jinx_name: &str) -> Result<()> {
+    let jinxes_dir = team_root.join("jinxes");
+    if !jinxes_dir.is_dir() {
+        return Ok(());
+    }
+    for entry in WalkDir::new(&jinxes_dir).follow_links(true) {
+        let entry = entry?;
+        if entry.file_type().is_file()
+            && entry.file_name().to_string_lossy() == format!("{}.jinx", jinx_name)
+        {
+            let jinx = load_jinx_from_file(entry.path())?;
+            team.jinxes.entry(jinx.name.clone()).or_insert(jinx);
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2226,6 +2327,7 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         team.jinxes = load_jinxes_from_directory(&legacy_dir)?;
     }
 
+
     let project_root = dir.parent().unwrap_or(dir);
     let agents_md = project_root.join("agents.md");
     if agents_md.exists() {
@@ -2236,6 +2338,25 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     let agents_dir = project_root.join("agents");
     if agents_dir.is_dir() {
         load_agents_from_dir(&agents_dir, &team.model, &team.provider, &mut team.npcs);
+    }
+
+    let mut foreign_refs: Vec<ForeignJinxRef> = Vec::new();
+    for npc in team.npcs.values() {
+        if let Some(ref npc_path) = npc.npc_path {
+            if let Ok(raw) = std::fs::read_to_string(npc_path) {
+                foreign_refs.extend(extract_foreign_jinx_refs(&raw));
+            }
+        }
+    }
+    for ref_ in foreign_refs {
+        if team.jinxes.contains_key(&ref_.name) {
+            continue;
+        }
+        if let Some(root) =
+            resolve_external_team_root(ref_.repo.as_deref(), ref_.path.as_deref(), ref_.ref_.as_deref())
+        {
+            let _ = load_foreign_jinx(&mut team, &root, &ref_.name);
+        }
     }
 
     for npc in team.npcs.values_mut() {
