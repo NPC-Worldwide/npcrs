@@ -19,13 +19,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Set version from tag
-        run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          sed -i "0,/^version = .*/s/^version = .*/version = \"$VERSION\"/" Cargo.toml
-          echo "Version set to $VERSION"
-
       - run: cargo test
       - run: cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
