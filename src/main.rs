@@ -562,15 +562,13 @@ async fn main() -> Result<()> {
                     Ok(output) => println!("{}", output),
                     Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
                 }
+            } else if let Some(proc) = kernel.find_by_name(target) {
+                current_pid = proc.pid;
+                eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
             } else {
-                if let Some(proc) = kernel.find_by_name(target) {
-                    current_pid = proc.pid;
-                    eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
-                } else {
-                    eprintln!("{RED}NPC '{target}' not found.{RESET} Available:");
-                    for p in kernel.ps() {
-                        eprintln!("  {CYAN}@{}{RESET}", p.npc.name);
-                    }
+                eprintln!("{RED}NPC '{target}' not found.{RESET} Available:");
+                for p in kernel.ps() {
+                    eprintln!("  {CYAN}@{}{RESET}", p.npc.name);
                 }
             }
             continue;
@@ -1146,11 +1144,9 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     for arg in args {
         if let Some((k, v)) = arg.split_once('=') {
             input_values.insert(k.to_string(), v.to_string());
-        } else {
-            if let Some(input) = jinx.inputs.get(positional_idx) {
-                input_values.insert(input.name.clone(), arg.to_string());
-                positional_idx += 1;
-            }
+        } else if let Some(input) = jinx.inputs.get(positional_idx) {
+            input_values.insert(input.name.clone(), arg.to_string());
+            positional_idx += 1;
         }
     }
 
@@ -1578,17 +1574,15 @@ fn readline_raw(
                             }
                             redraw_prompt(prompt, &buf, pos);
                         }
-                    } else {
-                        if !tab_matches.is_empty() {
-                            tab_index = (tab_index + 1) % tab_matches.len();
-                            let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
-                            let replacement = &tab_matches[tab_index].replacement;
-                            let new_buf =
-                                format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
-                            pos = word_start + replacement.len();
-                            buf = new_buf;
-                            redraw_prompt(prompt, &buf, pos);
-                        }
+                    } else if !tab_matches.is_empty() {
+                        tab_index = (tab_index + 1) % tab_matches.len();
+                        let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                        let replacement = &tab_matches[tab_index].replacement;
+                        let new_buf =
+                            format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                        pos = word_start + replacement.len();
+                        buf = new_buf;
+                        redraw_prompt(prompt, &buf, pos);
                     }
                 }
                 _ => {}

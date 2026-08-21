@@ -68,6 +68,9 @@ pub enum NpcError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Directory walk error: {0}")]
+    WalkDir(#[from] walkdir::Error),
+
     #[error("{0}")]
     Other(String),
 }

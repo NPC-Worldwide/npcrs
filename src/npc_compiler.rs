@@ -1120,7 +1120,10 @@ fn extract_jinx_call(line: &str) -> Option<String> {
         return None;
     }
 
-    let inner = trimmed.trim_start_matches("{{").trim_end_matches("}}").trim();
+    let inner = trimmed
+        .trim_start_matches("{{")
+        .trim_end_matches("}}")
+        .trim();
 
     if !inner.starts_with("Jinx(") {
         return None;
@@ -1142,9 +1145,12 @@ fn extract_jinx_call(line: &str) -> Option<String> {
 
 fn extract_foreign_jinx_refs(raw: &str) -> Vec<ForeignJinxRef> {
     let mut out = Vec::new();
-    let re = Regex::new(r"\{\{\s*Jinx\s*\(\s*['\"](?P<name>[^'\"]+)['\"]\s*(?:,\s*(?P<rest>[^)]*))?\s*\)\s*\}\}").unwrap();
-    let kw_re = Regex::new(r"(?P<key>repo|path|ref)\s*=\s*['\"](?P<val>[^'\"]+)['\"]").unwrap();
-    let positional_re = Regex::new(r"^\s*['\"](?P<val>[^'\"]+)['\"]\s*$").unwrap();
+    let re = Regex::new(
+        r#"\{\{\s*Jinx\s*\(\s*['\"](?P<name>[^'\"]+)['\"]\s*(?:,\s*(?P<rest>[^)]*))?\s*\)\s*\}\}"#,
+    )
+    .unwrap();
+    let kw_re = Regex::new(r#"(?P<key>repo|path|ref)\s*=\s*['\"](?P<val>[^'\"]+)['\"]"#).unwrap();
+    let positional_re = Regex::new(r#"^\s*['\"](?P<val>[^'\"]+)['\"]\s*$"#).unwrap();
     for cap in re.captures_iter(raw) {
         let name = cap.name("name").unwrap().as_str().to_string();
         let rest = cap.name("rest").map(|m| m.as_str());
@@ -1168,12 +1174,21 @@ fn extract_foreign_jinx_refs(raw: &str) -> Vec<ForeignJinxRef> {
                 }
             }
         }
-        out.push(ForeignJinxRef { name, repo, path, ref_ });
+        out.push(ForeignJinxRef {
+            name,
+            repo,
+            path,
+            ref_,
+        });
     }
     out
 }
 
-fn resolve_external_team_root(repo: Option<&str>, path: Option<&str>, ref_: Option<&str>) -> Option<PathBuf> {
+fn resolve_external_team_root(
+    repo: Option<&str>,
+    path: Option<&str>,
+    ref_: Option<&str>,
+) -> Option<PathBuf> {
     if let Some(p) = path {
         let expanded = shellexpand::tilde(p).to_string();
         let pb = PathBuf::from(expanded);
@@ -1199,11 +1214,14 @@ fn resolve_external_team_root(repo: Option<&str>, path: Option<&str>, ref_: Opti
             let _ = cmd.output();
         }
         if clone_dir.is_dir() {
-            for entry in WalkDir::new(&clone_dir).max_depth(10).follow_links(true) {
-                if let Ok(e) = entry {
-                    if e.file_name() == "npc_team" && e.path().is_dir() {
-                        return Some(e.path().to_path_buf());
-                    }
+            for e in WalkDir::new(&clone_dir)
+                .max_depth(10)
+                .follow_links(true)
+                .into_iter()
+                .flatten()
+            {
+                if e.file_name() == "npc_team" && e.path().is_dir() {
+                    return Some(e.path().to_path_buf());
                 }
             }
             if clone_dir.join("jinxes").is_dir() {
@@ -1254,6 +1272,9 @@ pub struct Jinx {
 
     #[serde(default)]
     pub npc: Option<String>,
+
+    #[serde(default)]
+    pub engine: Option<String>,
 
     #[serde(skip)]
     pub source_path: Option<String>,
@@ -1569,6 +1590,9 @@ pub fn load_jinxes_from_directory(dir: impl AsRef<Path>) -> Result<HashMap<Strin
         if path.extension().is_some_and(|ext| ext == "jinx") {
             match load_jinx_from_file(path) {
                 Ok(jinx) => {
+                    if jinx.engine.as_deref() == Some("skill") {
+                        continue;
+                    }
                     let name = if jinx.name.is_empty() {
                         path.file_stem()
                             .unwrap_or_default()
@@ -2327,7 +2351,6 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         team.jinxes = load_jinxes_from_directory(&legacy_dir)?;
     }
 
-
     let project_root = dir.parent().unwrap_or(dir);
     let agents_md = project_root.join("agents.md");
     if agents_md.exists() {
@@ -2352,9 +2375,11 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         if team.jinxes.contains_key(&ref_.name) {
             continue;
         }
-        if let Some(root) =
-            resolve_external_team_root(ref_.repo.as_deref(), ref_.path.as_deref(), ref_.ref_.as_deref())
-        {
+        if let Some(root) = resolve_external_team_root(
+            ref_.repo.as_deref(),
+            ref_.path.as_deref(),
+            ref_.ref_.as_deref(),
+        ) {
             let _ = load_foreign_jinx(&mut team, &root, &ref_.name);
         }
     }

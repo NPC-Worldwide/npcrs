@@ -1,4 +1,4 @@
-use npcrs::npc_compiler::{Jinx, execute_jinx, load_jinx_from_file, load_jinxes_from_directory};
+use npcrs::npc_compiler::{Jinx, execute_jinx, load_jinxes_from_directory};
 use std::collections::HashMap;
 
 #[test]
@@ -60,7 +60,7 @@ fn test_jinx_to_tool_def() {
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
 async fn test_bash_jinx_execution() {
-    let mut jinx = Jinx {
+    let jinx = Jinx {
         name: "test_echo".into(),
         aliases: vec![],
         description: "Test echo".into(),
@@ -72,6 +72,7 @@ async fn test_bash_jinx_execution() {
         }],
         file_context: vec![],
         npc: None,
+        engine: None,
         source_path: None,
     };
     let args = HashMap::new();
@@ -96,6 +97,7 @@ async fn test_python_jinx_execution() {
         }],
         file_context: vec![],
         npc: None,
+        engine: None,
         source_path: None,
     };
     let args = HashMap::new();
