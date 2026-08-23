@@ -2398,6 +2398,14 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     for npc in team.npcs.values_mut() {
         if npc.jinx_names.iter().any(|n| n == "*") {
             npc.jinx_names = team.jinxes.keys().cloned().collect();
+        } else {
+            // Team-level jinxes (including foreign refs loaded from team.ctx) are
+            // inherited by every NPC on the team.
+            for name in team.jinxes.keys() {
+                if !npc.jinx_names.contains(name) {
+                    npc.jinx_names.push(name.clone());
+                }
+            }
         }
     }
 
