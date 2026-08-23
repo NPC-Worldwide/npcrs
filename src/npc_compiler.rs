@@ -2364,6 +2364,17 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     }
 
     let mut foreign_refs: Vec<ForeignJinxRef> = Vec::new();
+
+    // Also scan the team context file(s) for foreign jinx references.
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "ctx") {
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                foreign_refs.extend(extract_foreign_jinx_refs(&raw));
+            }
+        }
+    }
+
     for npc in team.npcs.values() {
         if let Some(ref npc_path) = npc.npc_path {
             if let Ok(raw) = std::fs::read_to_string(npc_path) {
