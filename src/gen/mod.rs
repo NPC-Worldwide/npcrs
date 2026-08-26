@@ -1,5 +1,13 @@
 pub mod response_types;
 
+use std::sync::atomic::AtomicBool;
+
+/// Set by `npcrs_cancel_inference` to abort an in-flight local decode. The
+/// llamacpp token loop checks it every step; FFI entry points clear it when a
+/// turn begins. Lives here (not in the feature-gated module) so the FFI layer
+/// can touch it regardless of build features.
+pub static INFERENCE_CANCELLED: AtomicBool = AtomicBool::new(false);
+
 pub mod audio_gen;
 pub mod cost;
 pub mod embeddings;

@@ -1005,8 +1005,17 @@ pub async fn get_llm_response_ext(
             if resolved_provider == "llamacpp" || resolved_model.ends_with(".gguf") {
                 let model_path = resolved_model.clone();
                 let msgs = clean.clone();
+                let tools_owned = tools.map(|t| t.to_vec());
                 tokio::task::spawn_blocking(move || {
-                    crate::r#gen::get_llamacpp_response(&model_path, &msgs, 512, 0.7, 4096, -1)
+                    crate::r#gen::get_llamacpp_response(
+                        &model_path,
+                        &msgs,
+                        tools_owned.as_deref(),
+                        512,
+                        0.7,
+                        4096,
+                        -1,
+                    )
                 })
                 .await
                 .map_err(|e| NpcError::LlmRequest(format!("spawn_blocking: {}", e)))??
