@@ -42,9 +42,6 @@ pub struct NPC {
     pub mcp_servers: Vec<McpServerSpec>,
 
     #[serde(default)]
-    pub use_global_jinxes: bool,
-
-    #[serde(default)]
     pub plain_system_message: bool,
 
     #[serde(default)]
@@ -139,7 +136,6 @@ impl Default for NPC {
             colors: None,
             jinx_names: Vec::new(),
             mcp_servers: Vec::new(),
-            use_global_jinxes: false,
             plain_system_message: false,
             language: None,
             auto_execute: false,
@@ -2286,9 +2282,6 @@ pub struct TeamCtx {
     pub mcp_servers: Vec<crate::npc_compiler::McpServerSpec>,
 
     #[serde(default)]
-    pub use_global_jinxes: bool,
-
-    #[serde(default)]
     pub preferences: Vec<String>,
 }
 
@@ -2363,14 +2356,16 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         load_agents_from_dir(&agents_dir, &team.model, &team.provider, &mut team.npcs);
     }
 
-    let mut foreign_refs: Vec<ForeignJinxRef> = Vec::new();
+    let mut team_ctx_refs: Vec<ForeignJinxRef> = Vec::new();
+    let mut npc_foreign_refs: Vec<ForeignJinxRef> = Vec::new();
 
-    // Also scan the team context file(s) for foreign jinx references.
+    // Scan team context file(s) for foreign jinx references. These are inherited
+    // by every NPC on the team.
     for entry in std::fs::read_dir(dir)?.flatten() {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "ctx") {
             if let Ok(raw) = std::fs::read_to_string(&path) {
-                foreign_refs.extend(extract_foreign_jinx_refs(&raw));
+                team_ctx_refs.extend(extract_foreign_jinx_refs(&raw));
             }
         }
     }
@@ -2378,11 +2373,16 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     for npc in team.npcs.values() {
         if let Some(ref npc_path) = npc.npc_path {
             if let Ok(raw) = std::fs::read_to_string(npc_path) {
-                foreign_refs.extend(extract_foreign_jinx_refs(&raw));
+                npc_foreign_refs.extend(extract_foreign_jinx_refs(&raw));
             }
         }
     }
-    for ref_ in foreign_refs {
+
+    let mut all_foreign_refs = Vec::with_capacity(team_ctx_refs.len() + npc_foreign_refs.len());
+    all_foreign_refs.extend(team_ctx_refs.iter().cloned());
+    all_foreign_refs.extend(npc_foreign_refs.iter().cloned());
+
+    for ref_ in all_foreign_refs {
         if team.jinxes.contains_key(&ref_.name) {
             continue;
         }
@@ -2395,13 +2395,19 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
         }
     }
 
+    // Team-level foreign jinxes (declared in *.ctx files) are inherited by every
+    // NPC. Local jinxes from team/jinxes/ are only available to NPCs that
+    // declare them explicitly (or use the "*" wildcard).
+    let team_ctx_jinx_names: Vec<String> = team_ctx_refs
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+
     for npc in team.npcs.values_mut() {
         if npc.jinx_names.iter().any(|n| n == "*") {
             npc.jinx_names = team.jinxes.keys().cloned().collect();
         } else {
-            // Team-level jinxes (including foreign refs loaded from team.ctx) are
-            // inherited by every NPC on the team.
-            for name in team.jinxes.keys() {
+            for name in &team_ctx_jinx_names {
                 if !npc.jinx_names.contains(name) {
                     npc.jinx_names.push(name.clone());
                 }
