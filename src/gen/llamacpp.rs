@@ -49,7 +49,10 @@ pub fn get_llamacpp_response(
     let (prompt, chat_result) = match render_prompt_with_template(&model, messages, tools) {
         Ok(rendered) => rendered,
         Err(e) => {
-            tracing::warn!("chat template render failed ({}), falling back to ChatML", e);
+            tracing::warn!(
+                "chat template render failed ({}), falling back to ChatML",
+                e
+            );
             (format_chatml(messages), None)
         }
     };
@@ -209,13 +212,7 @@ fn render_prompt_with_template(
     };
 
     let result = model
-        .apply_chat_template_with_tools_oaicompat(
-            &tmpl,
-            &chat,
-            tools_json.as_deref(),
-            None,
-            true,
-        )
+        .apply_chat_template_with_tools_oaicompat(&tmpl, &chat, tools_json.as_deref(), None, true)
         .map_err(|e| format!("apply_chat_template: {:?}", e))?;
 
     Ok((result.prompt.clone(), Some(result)))
@@ -234,8 +231,11 @@ fn build_grammar_sampler(
         .filter(|t| t.trigger_type == GrammarTriggerType::Word)
         .map(|t| t.value.clone())
         .collect();
-    let token_triggers: Vec<LlamaToken> =
-        res.grammar_triggers.iter().filter_map(|t| t.token).collect();
+    let token_triggers: Vec<LlamaToken> = res
+        .grammar_triggers
+        .iter()
+        .filter_map(|t| t.token)
+        .collect();
     let patterns: Vec<String> = res
         .grammar_triggers
         .iter()
