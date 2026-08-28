@@ -37,6 +37,7 @@ genai = "0.5"
 
 # Local GGUF inference (llama.cpp) — optional, requires libclang
 llama-cpp-2 = { version = "=0.1.146", optional = true }
+llama-cpp-sys-2 = { version = "=0.1.146", optional = true }
 
 # SSE parsing for streaming
 eventsource-stream = "0.2"
@@ -102,7 +103,7 @@ dotenvy = "0.15.7"
 [features]
 default = ["ffi", "llamacpp"]
 ffi = []
-llamacpp = ["llama-cpp-2"]
+llamacpp = ["llama-cpp-2", "llama-cpp-sys-2"]
 python = []
 
 [dev-dependencies]
