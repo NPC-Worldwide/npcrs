@@ -2398,10 +2398,7 @@ pub fn load_team_from_directory(dir: impl AsRef<Path>) -> Result<Team> {
     // Team-level foreign jinxes (declared in *.ctx files) are inherited by every
     // NPC. Local jinxes from team/jinxes/ are only available to NPCs that
     // declare them explicitly (or use the "*" wildcard).
-    let team_ctx_jinx_names: Vec<String> = team_ctx_refs
-        .iter()
-        .map(|r| r.name.clone())
-        .collect();
+    let team_ctx_jinx_names: Vec<String> = team_ctx_refs.iter().map(|r| r.name.clone()).collect();
 
     for npc in team.npcs.values_mut() {
         if npc.jinx_names.iter().any(|n| n == "*") {

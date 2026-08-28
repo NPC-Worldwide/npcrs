@@ -322,7 +322,10 @@ fn run_tool_turn(
     eprintln!(
         "npcrs tool turn: input=\"{}\" tools={:?}",
         input,
-        tool_defs.iter().map(|t| t.function.name.as_str()).collect::<Vec<_>>()
+        tool_defs
+            .iter()
+            .map(|t| t.function.name.as_str())
+            .collect::<Vec<_>>()
     );
 
     let rt = tokio::runtime::Runtime::new().unwrap();
