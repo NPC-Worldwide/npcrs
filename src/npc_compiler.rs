@@ -2041,10 +2041,7 @@ try:
     _d = context.get('npc', {{}})
     if isinstance(_d, dict) and _d.get('name'):
         from npcpy.npc_compiler import NPC
-        from npcpy.npc_sysenv import get_history_db_path
-        from npcpy.memory.command_history import get_db_connection
-        _db = _d.get('db_conn') or str(get_history_db_path())
-        npc = NPC(name=_d['name'], primary_directive=_d.get('primary_directive',''), model=_d.get('model'), provider=_d.get('provider'), api_url=_d.get('api_url'), api_key=_d.get('api_key'), db_conn=get_db_connection(_db))
+        npc = NPC(name=_d['name'], primary_directive=_d.get('primary_directive',''), model=_d.get('model'), provider=_d.get('provider'), api_url=_d.get('api_url'), api_key=_d.get('api_key'))
         state.npc = npc
         state.chat_model = npc.model or state.chat_model
         state.chat_provider = npc.provider or state.chat_provider

@@ -6,11 +6,12 @@ use axum::{
     extract::{Json, Path as AxumPath, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tower_http::cors::CorsLayer;
 
 pub struct ServerConfig {
     pub http_port: u16,
@@ -28,10 +29,38 @@ impl Default for ServerConfig {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Trigger {
+    pub id: String,
+    pub name: String,
+    pub npc: Option<String>,
+    pub jinx: Option<String>,
+    pub schedule: Option<String>,
+    pub input: Option<String>,
+    pub args: HashMap<String, String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JobRecord {
+    pub id: String,
+    pub ran_at: String,
+    pub trigger_id: Option<String>,
+    pub npc: Option<String>,
+    pub jinx: Option<String>,
+    pub input: Option<String>,
+    pub output: Option<String>,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
 pub struct ServerState {
     pub team: Team,
     pub active_npc_name: String,
     pub conversations: HashMap<String, Vec<Message>>,
+    pub triggers: Vec<Trigger>,
+    pub job_history: Vec<JobRecord>,
+    pub db_path: Option<String>,
 }
 
 type AppState = Arc<Mutex<ServerState>>;
@@ -113,6 +142,23 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::delete(delete_message),
         )
         .route("/api/npc/save", post(save_npc))
+        .route("/api/team/reload", post(reload_team))
+        .route(
+            "/api/npcs/:name",
+            get(get_npc)
+                .post(save_npc_by_name)
+                .delete(delete_npc_by_name),
+        )
+        .route(
+            "/api/jinxes/:name",
+            get(get_jinx_by_name)
+                .post(save_jinx_by_name)
+                .delete(delete_jinx_by_name),
+        )
+        .route("/api/triggers", get(get_triggers).post(save_trigger))
+        .route("/api/triggers/:id", delete(delete_trigger))
+        .route("/api/jobs/run", post(run_job))
+        .route("/api/jobs/history", get(get_job_history))
         .route("/api/team/sync/status", get(team_sync_status))
         .route("/api/team/sync/init", post(team_sync_init))
         .route("/api/team/sync/pull", post(team_sync_pull))
@@ -123,7 +169,27 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/video", post(generate_video_api))
         .route("/api/npc/executions", get(get_npc_executions_route))
         .route("/api/jinx/executions", get(get_jinx_executions_route))
+        .layer(cors_layer())
         .with_state(state)
+}
+
+fn cors_layer() -> CorsLayer {
+    let origins = std::env::var("NPC_CORS_ORIGINS").unwrap_or_default();
+    if origins == "*" {
+        CorsLayer::very_permissive()
+    } else {
+        let list: Vec<axum::http::HeaderValue> = origins
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if list.is_empty() {
+            CorsLayer::new()
+        } else {
+            CorsLayer::new().allow_origin(list)
+        }
+    }
 }
 
 async fn health() -> impl IntoResponse {
@@ -894,6 +960,263 @@ async fn get_jinx_executions_route(Json(body): Json<serde_json::Value>) -> impl 
     }
 }
 
+async fn reload_team(State(state): State<AppState>) -> impl IntoResponse {
+    let source_dir = { state.lock().await.team.source_dir.clone() };
+    if let Some(dir) = source_dir {
+        match crate::npc_compiler::load_team_from_directory(&dir) {
+            Ok(team) => {
+                let mut state = state.lock().await;
+                state.active_npc_name = team
+                    .lead_npc()
+                    .map(|n| n.name.clone())
+                    .unwrap_or_else(|| "assistant".to_string());
+                state.team = team;
+                Json(serde_json::json!({"status": "reloaded"}))
+            }
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        }
+    } else {
+        Json(serde_json::json!({"error": "No team source directory"}))
+    }
+}
+
+async fn get_npc(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    let state = state.lock().await;
+    if let Some(npc) = state.team.get_npc(&name) {
+        Json(serde_json::json!({"npc": npc.to_dict()}))
+    } else {
+        Json(serde_json::json!({"error": format!("NPC '{}' not found", name)}))
+    }
+}
+
+async fn save_npc_by_name(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut npc: crate::npc_compiler::NPC = match serde_json::from_value(body) {
+        Ok(n) => n,
+        Err(e) => return Json(serde_json::json!({"error": e.to_string()})),
+    };
+    if npc.name.is_empty() {
+        npc.name = name.clone();
+    }
+    let mut state = state.lock().await;
+    let source_dir = state.team.source_dir.clone();
+    match npc.save(source_dir.as_deref()) {
+        Ok(_) => {
+            state.team.npcs.insert(name, npc);
+            Json(serde_json::json!({"status": "saved"}))
+        }
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn delete_npc_by_name(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    let mut state = state.lock().await;
+    state.team.npcs.remove(&name);
+    if let Some(dir) = &state.team.source_dir {
+        let path = std::path::Path::new(dir).join(format!("{}.npc", name));
+        match std::fs::remove_file(&path) {
+            Ok(_) => Json(serde_json::json!({"status": "deleted"})),
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        }
+    } else {
+        Json(serde_json::json!({"error": "No team source directory"}))
+    }
+}
+
+async fn get_jinx_by_name(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    let state = state.lock().await;
+    if let Some(jinx) = state.team.jinxes.get(&name) {
+        Json(serde_json::json!({"jinx": jinx.to_dict()}))
+    } else {
+        Json(serde_json::json!({"error": format!("Jinx '{}' not found", name)}))
+    }
+}
+
+async fn save_jinx_by_name(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut jinx: crate::npc_compiler::Jinx = match serde_json::from_value(body) {
+        Ok(j) => j,
+        Err(e) => return Json(serde_json::json!({"error": e.to_string()})),
+    };
+    if jinx.name.is_empty() {
+        jinx.name = name.clone();
+    }
+    let mut state = state.lock().await;
+    if let Some(dir) = &state.team.source_dir {
+        let jinx_dir = std::path::Path::new(dir).join("jinxes");
+        match jinx.save(jinx_dir.to_str().unwrap_or(".")) {
+            Ok(_) => {
+                state.team.jinxes.insert(name, jinx);
+                Json(serde_json::json!({"status": "saved"}))
+            }
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        }
+    } else {
+        Json(serde_json::json!({"error": "No team source directory"}))
+    }
+}
+
+async fn delete_jinx_by_name(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    let mut state = state.lock().await;
+    state.team.jinxes.remove(&name);
+    if let Some(dir) = &state.team.source_dir {
+        let path = std::path::Path::new(dir)
+            .join("jinxes")
+            .join(format!("{}.jinx", name));
+        match std::fs::remove_file(&path) {
+            Ok(_) => Json(serde_json::json!({"status": "deleted"})),
+            Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        }
+    } else {
+        Json(serde_json::json!({"error": "No team source directory"}))
+    }
+}
+
+async fn get_triggers(State(state): State<AppState>) -> impl IntoResponse {
+    let state = state.lock().await;
+    Json(serde_json::json!({"triggers": state.triggers}))
+}
+
+async fn save_trigger(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let mut trigger: Trigger = match serde_json::from_value(body) {
+        Ok(t) => t,
+        Err(e) => return Json(serde_json::json!({"error": e.to_string()})),
+    };
+    if trigger.id.is_empty() {
+        trigger.id = uuid::Uuid::new_v4().to_string();
+    }
+    let mut state = state.lock().await;
+    state.triggers.retain(|t| t.id != trigger.id);
+    state.triggers.push(trigger.clone());
+    Json(serde_json::json!({"trigger": trigger}))
+}
+
+async fn delete_trigger(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    let mut state = state.lock().await;
+    state.triggers.retain(|t| t.id != id);
+    Json(serde_json::json!({"status": "deleted"}))
+}
+
+async fn run_job(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let trigger_id = body["trigger_id"].as_str().map(String::from);
+    let npc_name = body["npc"].as_str().map(String::from);
+    let jinx_name = body["jinx"].as_str().map(String::from);
+    let input = body["input"].as_str().map(String::from);
+    let args: HashMap<String, String> = body["args"]
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let record_id = uuid::Uuid::new_v4().to_string();
+
+    let (output, success, error) = if let Some(jinx_name) = &jinx_name {
+        let state = state.lock().await;
+        if let Some(jinx) = state.team.jinxes.get(jinx_name) {
+            let result = jinx.execute(&args);
+            (Some(result.output), result.success, result.error)
+        } else {
+            (None, false, Some(format!("Jinx '{}' not found", jinx_name)))
+        }
+    } else if let Some(npc_name) = &npc_name {
+        let (npc, team_context) = {
+            let state = state.lock().await;
+            let npc = state.team.get_npc(npc_name).cloned();
+            let ctx = state.team.context.clone();
+            (npc, ctx)
+        };
+        if let Some(npc) = npc {
+            let prompt = input.clone().unwrap_or_default();
+            let system = npc.system_prompt(team_context.as_deref());
+            let messages = vec![Message::system(system), Message::user(&prompt)];
+            match crate::r#gen::get_genai_response(
+                &npc.resolved_provider(),
+                &npc.resolved_model(),
+                &messages,
+                None,
+                npc.api_url.as_deref(),
+                npc.api_key.as_deref(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            {
+                Ok(resp) => {
+                    let out = resp.message.content.clone();
+                    (out, true, None)
+                }
+                Err(e) => (None, false, Some(e.to_string())),
+            }
+        } else {
+            (None, false, Some(format!("NPC '{}' not found", npc_name)))
+        }
+    } else {
+        (None, false, Some("Missing npc or jinx name".to_string()))
+    };
+
+    let record = JobRecord {
+        id: record_id.clone(),
+        ran_at: now,
+        trigger_id,
+        npc: npc_name,
+        jinx: jinx_name,
+        input,
+        output: output.clone(),
+        success,
+        error: error.clone(),
+    };
+    {
+        let mut state = state.lock().await;
+        state.job_history.push(record);
+    }
+
+    Json(serde_json::json!({
+        "job_id": record_id,
+        "output": output,
+        "success": success,
+        "error": error,
+    }))
+}
+
+async fn get_job_history(State(state): State<AppState>) -> impl IntoResponse {
+    let state = state.lock().await;
+    let history: Vec<&JobRecord> = state.job_history.iter().rev().take(100).collect();
+    Json(serde_json::json!({"jobs": history}))
+}
+
 pub async fn start_http_server(state: AppState, config: &ServerConfig) -> Result<()> {
     let app = create_app(state);
     let addr = format!("{}:{}", config.host, config.http_port);
@@ -1013,7 +1336,11 @@ pub async fn start_mcp_server(state: AppState) -> Result<()> {
     Ok(())
 }
 
-pub async fn start_servers(team: Team, config: ServerConfig) -> Result<()> {
+pub async fn start_servers(
+    team: Team,
+    config: ServerConfig,
+    db_path: Option<String>,
+) -> Result<()> {
     let active_npc = team
         .lead_npc()
         .map(|n| n.name.clone())
@@ -1022,6 +1349,9 @@ pub async fn start_servers(team: Team, config: ServerConfig) -> Result<()> {
         team,
         active_npc_name: active_npc,
         conversations: HashMap::new(),
+        triggers: Vec::new(),
+        job_history: Vec::new(),
+        db_path,
     }));
 
     if config.mcp_enabled {
