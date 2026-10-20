@@ -104,31 +104,42 @@ impl Kernel {
     }
 
     pub async fn exec_chat(&mut self, pid: Pid, input: &str) -> Result<String> {
-        let process = self
-            .processes
-            .get_mut(&pid)
-            .ok_or_else(|| NpcError::Other(format!("No process with pid {}", pid)))?;
+        let (system, prior_messages, provider, model, api_url, api_key, conv_id, npc_name) = {
+            let process = self
+                .processes
+                .get_mut(&pid)
+                .ok_or_else(|| NpcError::Other(format!("No process with pid {}", pid)))?;
 
-        process.state = ProcessState::Running;
-        process.new_turn();
+            process.state = ProcessState::Running;
+            process.new_turn();
 
-        let system = process.npc.system_prompt(self.team.context.as_deref());
+            (
+                process.npc.system_prompt(self.team.context.as_deref()),
+                process.messages.clone(),
+                process.npc.resolved_provider(),
+                process.npc.resolved_model(),
+                process.npc.api_url.clone(),
+                process.npc.api_key.clone(),
+                process.conversation_id.clone(),
+                process.npc.name.clone(),
+            )
+        };
 
         let mut messages = vec![Message::system(system)];
-        for m in &process.messages {
+        for m in prior_messages {
             if m.role != "tool" && m.tool_calls.is_none() {
-                messages.push(m.clone());
+                messages.push(m);
             }
         }
         messages.push(Message::user(input));
 
         let response = crate::r#gen::get_genai_response(
-            &process.npc.resolved_provider(),
-            &process.npc.resolved_model(),
+            &provider,
+            &model,
             &messages,
             None,
-            process.npc.api_url.as_deref(),
-            process.npc.api_key.as_deref(),
+            api_url.as_deref(),
+            api_key.as_deref(),
             None,
             None,
             false,
@@ -136,14 +147,57 @@ impl Kernel {
         )
         .await?;
 
-        if let Some(ref usage) = response.usage {
-            process.record_usage(usage.prompt_tokens, usage.completion_tokens, 0.0);
+        let output = response.message.content.clone().unwrap_or_default();
+        let usage = response.usage.clone();
+        let cost = response.cost_usd;
+
+        {
+            let process = self.processes.get_mut(&pid).unwrap();
+            if let Some(ref u) = usage {
+                process.record_usage(u.prompt_tokens, u.completion_tokens, cost.unwrap_or(0.0));
+            }
+            process.messages.push(Message::user(input));
+            process.messages.push(response.message);
+            process.state = ProcessState::Blocked;
         }
 
-        let output = response.message.content.clone().unwrap_or_default();
-        process.messages.push(Message::user(input));
-        process.messages.push(response.message);
-        process.state = ProcessState::Blocked;
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let team_name = self.team.name.clone();
+
+        let _ = self.history.save_conversation_message(
+            &conv_id,
+            "user",
+            input,
+            &cwd,
+            Some(&model),
+            Some(&provider),
+            Some(&npc_name),
+            Some(&team_name),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let _ = self.history.save_conversation_message(
+            &conv_id,
+            "assistant",
+            &output,
+            &cwd,
+            Some(&model),
+            Some(&provider),
+            Some(&npc_name),
+            Some(&team_name),
+            None,
+            None,
+            None,
+            usage.as_ref().map(|u| u.prompt_tokens),
+            usage.as_ref().map(|u| u.completion_tokens),
+            cost,
+        );
 
         Ok(output)
     }
@@ -808,6 +862,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             args,
                             &self.jinxes,
                             Some(active_npc),
+                            None,
                         )
                         .await
                         {

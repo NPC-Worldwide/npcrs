@@ -650,31 +650,10 @@ async fn main() -> Result<()> {
         // Mode-specific dispatch
         _turn_count += 1;
 
-        let (npc_name_str, team_name_str, model_str, provider_str, conv_id) = {
-            let p = kernel.get_process(current_pid);
-            let npc_name = p
-                .map(|p| p.npc.name.clone())
-                .unwrap_or_else(|| "npcsh".to_string());
-            let team_name = kernel
-                .team
-                .source_dir
-                .as_deref()
-                .and_then(|d| std::path::Path::new(d).file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("npcsh")
-                .to_string();
-            let model = p
-                .map(|p| p.npc.resolved_model())
-                .unwrap_or_else(|| "qwen3.5:2b".to_string());
-            let provider = p
-                .map(|p| p.npc.resolved_provider())
-                .unwrap_or_else(|| "ollama".to_string());
-            let conv_id = p.map(|p| p.conversation_id.clone()).unwrap_or_default();
-            (npc_name, team_name, model, provider, conv_id)
-        };
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| ".".to_string());
+        let (model_str, provider_str) = kernel
+            .get_process(current_pid)
+            .map(|p| (p.npc.resolved_model(), p.npc.resolved_provider()))
+            .unwrap_or_else(|| ("qwen3.5:2b".to_string(), "ollama".to_string()));
 
         let exec_result = match mode {
             Mode::Agent => {
@@ -702,51 +681,6 @@ async fn main() -> Result<()> {
                         println!("\n{}", output);
                     }
                     println!("{DIM}  [{} | {}]{RESET}", model_str, provider_str);
-
-                    let p = kernel.get_process(current_pid);
-                    let (in_tok, out_tok, cost) = p
-                        .map(|p| {
-                            (
-                                p.usage.total_input_tokens,
-                                p.usage.total_output_tokens,
-                                p.usage.total_cost_usd,
-                            )
-                        })
-                        .unwrap_or((0, 0, 0.0));
-
-                    let _ = kernel.history.save_conversation_message(
-                        &conv_id,
-                        "user",
-                        &input,
-                        &cwd,
-                        Some(&model_str),
-                        Some(&provider_str),
-                        Some(&npc_name_str),
-                        Some(&team_name_str),
-                        None,
-                        None,
-                        None,
-                        Some(in_tok),
-                        None,
-                        None,
-                    );
-
-                    let _ = kernel.history.save_conversation_message(
-                        &conv_id,
-                        "assistant",
-                        &output,
-                        &cwd,
-                        Some(&model_str),
-                        Some(&provider_str),
-                        Some(&npc_name_str),
-                        Some(&team_name_str),
-                        None,
-                        None,
-                        None,
-                        Some(in_tok),
-                        Some(out_tok),
-                        Some(cost),
-                    );
                 }
                 Err(e) => {
                     eprintln!("{RED}Error: {e}{RESET}");
