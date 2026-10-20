@@ -56,19 +56,41 @@ pub async fn execute_syscall(
 
     let needs_tty = npc_compiler::jinx_needs_tty(jinx);
     let has_python_steps = jinx.steps.iter().any(|s| s.engine == "python");
+    let messages = kernel.processes.get(&pid).map(|p| p.messages.clone());
 
     let result = if needs_tty {
         // TUI jinxes must run inline in the foreground process to access the terminal.
         let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
-        npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
+        npc_compiler::execute_jinx_with_npc(
+            jinx,
+            args,
+            &kernel.jinxes,
+            active_npc,
+            messages.clone(),
+        )
+        .await?
     } else if has_python_steps {
         // Run Python jinxes inline (subprocess) so TUI prompts work
         // correctly. The daemon is reserved for LLM calls only.
         let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
-        npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
+        npc_compiler::execute_jinx_with_npc(
+            jinx,
+            args,
+            &kernel.jinxes,
+            active_npc,
+            messages.clone(),
+        )
+        .await?
     } else {
         let active_npc = kernel.processes.get(&pid).map(|p| &p.npc);
-        npc_compiler::execute_jinx_with_npc(jinx, args, &kernel.jinxes, active_npc).await?
+        npc_compiler::execute_jinx_with_npc(
+            jinx,
+            args,
+            &kernel.jinxes,
+            active_npc,
+            messages.clone(),
+        )
+        .await?
     };
 
     let conv_id = kernel

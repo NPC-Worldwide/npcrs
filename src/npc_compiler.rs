@@ -1621,7 +1621,7 @@ pub async fn execute_jinx(
     input_values: &HashMap<String, String>,
     available_jinxes: &HashMap<String, Jinx>,
 ) -> Result<JinxResult> {
-    execute_jinx_with_npc(jinx, input_values, available_jinxes, None).await
+    execute_jinx_with_npc(jinx, input_values, available_jinxes, None, None).await
 }
 
 pub async fn execute_jinx_with_npc(
@@ -1629,9 +1629,14 @@ pub async fn execute_jinx_with_npc(
     input_values: &HashMap<String, String>,
     available_jinxes: &HashMap<String, Jinx>,
     npc: Option<&NPC>,
+    messages: Option<Vec<Message>>,
 ) -> Result<JinxResult> {
     let mut context: HashMap<String, serde_json::Value> = HashMap::new();
     let mut output = String::new();
+
+    if let Some(messages) = messages {
+        context.insert("messages".to_string(), serde_json::json!(messages));
+    }
 
     if let Some(npc) = npc {
         context.insert(
