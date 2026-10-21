@@ -59,6 +59,17 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libssl-dev libclang-dev
 
+      - name: Use OpenSSL 3 on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install openssl@3
+          {
+            echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)"
+            echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib"
+            echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include"
+          } >> "$GITHUB_ENV"
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
