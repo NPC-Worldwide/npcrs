@@ -239,6 +239,12 @@ async fn main() -> Result<()> {
             return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
         }
     }
+    // npc/npcrs <agent-coder> [args...] — e.g. npc claude, npcrs codex --npc corca
+    if invoked_as == "npc" || invoked_as == "npcrs" {
+        if maybe_agent_coder(&args[1..]).is_some() {
+            return Ok(());
+        }
+    }
 
     // npcsh script.nsh — execute .nsh file
     if let Some(file) = args.get(1)
@@ -246,6 +252,43 @@ async fn main() -> Result<()> {
         && !file.starts_with('-')
     {
         return exec_nsh_file(file).await;
+    }
+
+    // npcrs mcp-server [team_path] [--npc name] — stdio MCP server for agent coders
+    if let Some(file) = args.get(1)
+        && file == "mcp-server"
+    {
+        let mut team_path: Option<String> = None;
+        let mut npc_name: Option<String> = None;
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--npc" => {
+                    npc_name = args.get(i + 1).cloned();
+                    i += 2;
+                }
+                _ => {
+                    if team_path.is_none() && !args[i].starts_with("--") {
+                        team_path = Some(args[i].clone());
+                    }
+                    i += 1;
+                }
+            }
+        }
+        let tp = team_path.unwrap_or_else(|| {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let candidate = cwd.join("npc_team");
+            if candidate.exists() {
+                candidate.to_string_lossy().to_string()
+            } else {
+                npcrs::npc_sysenv::get_data_dir()
+                    .join("npc_team")
+                    .to_string_lossy()
+                    .to_string()
+            }
+        });
+        let mut server = npcrs::mcp_server::McpServer::load(&tp, npc_name.as_deref())?;
+        return server.run_stdio().await;
     }
 
     // Check for -c flag
@@ -655,6 +698,15 @@ async fn main() -> Result<()> {
             .map(|p| (p.npc.resolved_model(), p.npc.resolved_provider()))
             .unwrap_or_else(|| ("qwen3.5:2b".to_string(), "ollama".to_string()));
 
+        // Agent-coder interception: known coder binaries (claude, codex, ...)
+        // route through the picker + MCP attach layer.
+        let first_token = input.split_whitespace().next().unwrap_or("");
+        if npcrs::agent_coders::is_agent_coder(first_token) {
+            let parts: Vec<String> = input.split_whitespace().map(|s| s.to_string()).collect();
+            let _ = maybe_agent_coder(&parts);
+            continue;
+        }
+
         let exec_result = match mode {
             Mode::Agent => {
                 if is_bash_command(&input) {
@@ -751,6 +803,34 @@ fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode
 }
 
 /// Print the welcome screen.
+fn maybe_agent_coder(args: &[String]) -> Option<()> {
+    // If invoked as `npc claude ...` or `npcsh` REPL runs `claude ...`,
+    // intercept and route through the agent-coder layer.
+    let tool = args.first()?.as_str();
+    if !npcrs::agent_coders::is_agent_coder(tool) {
+        return None;
+    }
+    let extra: Vec<String> = args[1..].to_vec();
+    // --npc flag support: npc claude --npc corca
+    let (npc_name, extra): (Option<String>, Vec<String>) = {
+        if let Some(pos) = extra.iter().position(|a| a == "--npc") {
+            let npc = extra.get(pos + 1).cloned();
+            let mut rest = extra.clone();
+            let _ = rest.splice(pos..=pos + 1.min(rest.len() - 1), []);
+            (npc, rest)
+        } else {
+            (None, extra)
+        }
+    };
+    match npcrs::agent_coders::run_agent_coder(tool, None, npc_name.as_deref(), &extra) {
+        Ok(()) => Some(()),
+        Err(e) => {
+            eprintln!("[npc] agent coder error: {}", e);
+            Some(())
+        }
+    }
+}
+
 fn print_welcome(kernel: &Kernel) {
     let s = kernel.stats();
 

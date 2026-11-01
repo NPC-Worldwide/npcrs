@@ -6,12 +6,16 @@ pub fn discover_team_path(explicit: Option<&str>) -> String {
         return p.to_string();
     }
     let cwd = std::env::current_dir().unwrap_or_default();
-    let candidate = cwd.join("npc_team");
-    if candidate.exists() {
-        return candidate.to_string_lossy().to_string();
+    for rel in ["npc_team", "npcpy/npc_team"] {
+        let candidate = cwd.join(rel);
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
     }
-    let global = crate::npc_sysenv::get_data_dir().join("npc_team");
-    global.to_string_lossy().to_string()
+    crate::npc_sysenv::get_data_dir()
+        .join("npc_team")
+        .to_string_lossy()
+        .to_string()
 }
 
 pub fn load_team(team_path: &str) -> Result<crate::npc_compiler::Team> {

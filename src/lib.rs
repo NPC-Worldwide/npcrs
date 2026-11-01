@@ -57,10 +57,12 @@ pub mod npc_sysenv;
 pub mod tools; // Tool registry — mirrors npcpy.tools
 pub mod work; // Job scheduling, triggers — mirrors npcpy.work // System environment — mirrors npcpy.npc_sysenv
 
+pub mod agent_coders;
 pub mod build_funcs;
 pub mod init;
 pub mod launcher;
 pub mod mcp;
+pub mod mcp_server;
 pub mod plugin_setup;
 pub mod serve;
 pub mod shell;
